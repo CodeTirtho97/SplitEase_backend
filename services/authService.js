@@ -1,14 +1,13 @@
 const User = require("../models/User");
 const jwt = require("jsonwebtoken");
-const bcrypt = require("bcryptjs");
 require("dotenv").config();
 
-// Generate JWT Token
+// ✅ Generate JWT Token
 const generateToken = (userId) => {
   return jwt.sign({ id: userId }, process.env.JWT_SECRET, { expiresIn: "7d" });
 };
 
-// Signup Function
+// ✅ Signup Function
 const signupUser = async (req, res) => {
   try {
     const { fullName, email, gender, password } = req.body;
@@ -27,40 +26,41 @@ const signupUser = async (req, res) => {
       token: generateToken(newUser._id),
       userId: newUser._id,
       fullName: newUser.fullName,
+      email: newUser.email,
+      gender: newUser.gender,
     });
   } catch (error) {
     res.status(500).json({ message: "Server Error", error: error.message });
   }
 };
 
-// Login Function
+// ✅ Login Function
 const loginUser = async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    // Check if user exists
     const user = await User.findOne({ email });
-    if (!user) {
+    if (!user)
       return res.status(401).json({ message: "Invalid email or password" });
-    }
 
-    // Verify password
     const isPasswordMatch = await user.matchPassword(password);
-    if (!isPasswordMatch) {
+    if (!isPasswordMatch)
       return res.status(401).json({ message: "Invalid email or password" });
-    }
 
     res.json({
       message: "Login successful",
       token: generateToken(user._id),
       userId: user._id,
       fullName: user.fullName,
+      email: user.email,
+      gender: user.gender,
     });
   } catch (error) {
     res.status(500).json({ message: "Server Error", error: error.message });
   }
 };
 
+// ✅ Google OAuth Callback
 const googleAuthCallback = async (req, res) => {
   try {
     if (!req.user) {
@@ -73,6 +73,7 @@ const googleAuthCallback = async (req, res) => {
       userId: req.user.user._id,
       fullName: req.user.user.fullName,
       profilePic: req.user.user.profilePic,
+      email: req.user.user.email,
     });
   } catch (error) {
     res.status(500).json({ message: "Server Error", error: error.message });

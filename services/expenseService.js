@@ -3,8 +3,9 @@ const Expense = require("../models/Expense");
 const Group = require("../models/Group");
 const User = require("../models/User");
 const { calculateSplitDetails } = require("../utils/splitCalculator");
+const Transaction = require("../models/Transaction");
 
-// Create an Expense with Full Validation
+// ✅ Create an Expense with Full Validation
 const createExpense = async (req, res) => {
   try {
     const {
@@ -14,6 +15,7 @@ const createExpense = async (req, res) => {
       splitMethod,
       groupId,
       splitValues,
+      paymentMode = "UPI", // Default to UPI if not provided
     } = req.body;
 
     if (
@@ -28,45 +30,49 @@ const createExpense = async (req, res) => {
       });
     }
 
-    const creatorId = new mongoose.Types.ObjectId(req.user.id); // Expense creator
+    if (totalAmount <= 0) {
+      return res.status(400).json({
+        message: "Expense amount must be greater than zero.",
+      });
+    }
 
-    // Validate and convert participants to ObjectId
+    const payerId = new mongoose.Types.ObjectId(req.user.id);
+
+    // ✅ Convert participants to ObjectId & Validate
     let participantsObjectIds = participants.map((id) => {
       if (!mongoose.Types.ObjectId.isValid(id)) {
-        return res
-          .status(400)
-          .json({ message: `Invalid participant ID: ${id}` });
+        throw new Error(`Invalid participant ID: ${id}`);
       }
       return new mongoose.Types.ObjectId(id);
     });
 
-    // Validate that all participants exist
+    // ✅ Ensure all participants exist
     const existingUsers = await User.find({
       _id: { $in: participantsObjectIds },
     });
-
     if (existingUsers.length !== participantsObjectIds.length) {
       return res
         .status(400)
         .json({ message: "One or more participants do not exist." });
     }
 
+    // ✅ If groupId is provided, validate group existence
     let groupObjectId = null;
     if (groupId) {
       if (!mongoose.Types.ObjectId.isValid(groupId)) {
         return res.status(400).json({ message: "Invalid group ID format" });
       }
-
       groupObjectId = new mongoose.Types.ObjectId(groupId);
+
       const existingGroup = await Group.findById(groupObjectId);
       if (!existingGroup) {
         return res.status(400).json({ message: "Group not found." });
       }
     }
 
-    // ✅ **Check for Duplicate Expense Before Creation**
+    // ✅ Prevent duplicate expenses
     const existingExpense = await Expense.findOne({
-      payer: creatorId,
+      payer: payerId,
       totalAmount,
       description,
       splitMethod,
@@ -83,97 +89,165 @@ const createExpense = async (req, res) => {
         .json({ message: "Duplicate expense already exists." });
     }
 
-    // Ensure splitValues are valid for Percentage & Custom methods
-    if (splitMethod === "Percentage" || splitMethod === "Custom") {
-      if (
-        !splitValues ||
-        !Array.isArray(splitValues) ||
-        splitValues.length !== participantsObjectIds.length
-      ) {
-        return res.status(400).json({
-          message: `For '${splitMethod}' split, splitValues array must be provided with valid user amounts.`,
-        });
-      }
-    }
+    // ✅ Generate split details
+    let splitDetails = calculateSplitDetails(
+      splitMethod,
+      totalAmount,
+      participantsObjectIds,
+      splitValues
+    );
 
-    // Generate split details using the function
-    let splitDetails;
-    try {
-      splitDetails = calculateSplitDetails(
-        splitMethod,
-        totalAmount,
-        participantsObjectIds,
-        splitValues
-      );
-    } catch (error) {
-      return res.status(400).json({ message: error.message });
-    }
+    // ✅ Remove payer from transactions (self-pay issue)
+    splitDetails = splitDetails.filter(
+      (split) => !split.userId.equals(payerId)
+    );
 
-    // Create new expense
+    // ✅ Create expense
     const newExpense = await Expense.create({
-      payer: creatorId,
+      payer: payerId,
       totalAmount,
       description,
       participants: participantsObjectIds,
       splitMethod,
-      splitValues: splitMethod === "Equal" ? [] : splitValues, // Store splitValues only for Percentage & Custom
       splitDetails,
       groupId: groupObjectId,
     });
 
-    res
-      .status(201)
-      .json({ message: "Expense added successfully", expense: newExpense });
+    // ✅ Auto-create transactions for each participant
+    const transactionPromises = splitDetails.map(async (split) => {
+      return await Transaction.create({
+        expenseId: newExpense._id,
+        sender: split.userId,
+        receiver: payerId,
+        amount: split.amountOwed,
+        currency: "INR",
+        mode: paymentMode,
+        status: "Pending",
+      });
+    });
+
+    const transactions = await Promise.all(transactionPromises);
+
+    res.status(201).json({
+      message: "Expense added successfully with transactions",
+      expense: newExpense,
+      transactions,
+    });
   } catch (error) {
     console.error("Error creating expense:", error);
     res.status(500).json({ message: "Server Error", error: error.message });
   }
 };
 
-module.exports = { createExpense };
-
-// Get Expenses for a User
-const getUserExpenses = async (req, res) => {
-  try {
-    const expenses = await Expense.find({ participants: req.user.id }).populate(
-      "payer",
-      "fullName"
-    );
-    res.json(expenses);
-  } catch (error) {
-    res.status(500).json({ message: "Server Error", error: error.message });
-  }
-};
-
-// Fetch Expenses for a Specific Group
+// ✅ Fetch Expenses for a Specific Group
 const getGroupExpenses = async (req, res) => {
   try {
     const { groupId } = req.params;
 
-    // Validate and convert `groupId` to ObjectId
     if (!mongoose.Types.ObjectId.isValid(groupId)) {
       return res.status(400).json({ message: "Invalid group ID format" });
     }
 
-    const groupObjectId = new mongoose.Types.ObjectId(groupId);
+    const expenses = await Expense.find({ groupId })
+      .populate("payer", "fullName email")
+      .populate("participants", "fullName email");
 
-    // Find expenses related to the specified group
-    const expenses = await Expense.find({ groupId: groupObjectId }).populate(
-      "participants",
-      "fullName email"
-    );
-
-    if (!expenses || expenses.length === 0) {
+    if (!expenses.length) {
       return res
-        .status(200)
-        .json({ message: "No expenses found for this group", expenses: [] });
+        .status(404)
+        .json({ message: "No expenses found for this group." });
     }
 
-    res.json(expenses);
+    res.json({ message: "Expenses fetched successfully.", expenses });
   } catch (error) {
     console.error("Error fetching group expenses:", error);
     res.status(500).json({ message: "Server Error", error: error.message });
   }
 };
 
-module.exports = { createExpense, getGroupExpenses, getUserExpenses };
+// ✅ Fetch Expenses for Logged-in User
+const getUserExpenses = async (req, res) => {
+  try {
+    const expenses = await Expense.find({ participants: req.user.id })
+      .populate("payer", "fullName email")
+      .populate("participants", "fullName email");
+
+    res
+      .status(200)
+      .json({ message: "User expenses fetched successfully.", expenses });
+  } catch (error) {
+    console.error("Error fetching user expenses:", error);
+    res.status(500).json({ message: "Server Error", error: error.message });
+  }
+};
+
+// ✅ Fetch a Specific Expense by ID
+const getExpenseById = async (req, res) => {
+  try {
+    const { expenseId } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(expenseId)) {
+      return res.status(400).json({ message: "Invalid expense ID format" });
+    }
+
+    const expense = await Expense.findById(expenseId)
+      .populate("payer", "fullName email")
+      .populate("participants", "fullName email");
+
+    if (!expense) {
+      return res.status(404).json({ message: "Expense not found." });
+    }
+
+    res
+      .status(200)
+      .json({ message: "Expense details fetched successfully.", expense });
+  } catch (error) {
+    console.error("Error fetching expense:", error);
+    res.status(500).json({ message: "Server Error", error: error.message });
+  }
+};
+
+// ✅ Delete an Expense (Only Creator Can Delete)
+const deleteExpense = async (req, res) => {
+  try {
+    const { expenseId } = req.params;
+    const userId = req.user.id;
+
+    // Validate Expense ID
+    if (!mongoose.Types.ObjectId.isValid(expenseId)) {
+      return res.status(400).json({ message: "Invalid expense ID format" });
+    }
+
+    // Find the expense
+    const expense = await Expense.findById(expenseId);
+    if (!expense) {
+      return res.status(404).json({ message: "Expense not found" });
+    }
+
+    // ✅ Ensure only the expense payer (creator) can delete it
+    if (expense.payer.toString() !== userId) {
+      return res
+        .status(403)
+        .json({ message: "You are not authorized to delete this expense." });
+    }
+
+    // ✅ Delete related transactions
+    await Transaction.deleteMany({ expenseId });
+
+    // ✅ Delete the expense
+    await Expense.findByIdAndDelete(expenseId);
+
+    res.status(200).json({ message: "Expense deleted successfully" });
+  } catch (error) {
+    console.error("Error deleting expense:", error);
+    res.status(500).json({ message: "Server Error", error: error.message });
+  }
+};
+
+module.exports = {
+  createExpense,
+  getGroupExpenses,
+  getUserExpenses,
+  getExpenseById,
+  deleteExpense,
+};

@@ -4,6 +4,8 @@ const {
   signupUser,
   loginUser,
   googleAuthCallback,
+  forgotPassword,
+  resetPassword,
 } = require("../services/authService");
 const protect = require("../middleware/authMiddleware");
 
@@ -30,6 +32,12 @@ router.get(
   passport.authenticate("google", { session: false }),
   googleAuthCallback
 );
+
+// ✅ Forgot Password Route
+router.post("/forgot-password", forgotPassword);
+
+// ✅ Reset Password Route
+router.post("/reset-password", resetPassword);
 
 // ✅ **Protected Route (For Testing JWT Token)**
 router.get("/protected", protect, (req, res) => {

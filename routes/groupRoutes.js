@@ -1,13 +1,21 @@
 const express = require("express");
-const { createGroup, getUserGroups } = require("../services/groupService");
-const protect = require("../middleware/authMiddleware"); // Ensure only logged-in users can access
+const {
+  createGroup,
+  getUserGroups,
+  deleteGroup, // Ensure this exists in `groupService.js`
+} = require("../services/groupService");
+
+const protect = require("../middleware/authMiddleware");
 
 const router = express.Router();
 
-// Route to create a new group
+// Create a new group
 router.post("/create", protect, createGroup);
 
-// Route to get all groups a user is part of
-router.get("/my-groups", protect, getUserGroups);
+// Fetch user's groups
+router.get("/mygroups", protect, getUserGroups);
+
+// Delete a group
+router.delete("/delete/:groupId", protect, deleteGroup);
 
 module.exports = router;

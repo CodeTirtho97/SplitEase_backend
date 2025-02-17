@@ -13,7 +13,7 @@ const groupSchema = new mongoose.Schema({
   },
   type: {
     type: String,
-    enum: ["Food", "Entertainment", "Transport", "Utilities", "Other"],
+    enum: ["Food", "Entertainment", "Travel", "Utilities", "Other"],
     default: "Other",
     required: true,
   },

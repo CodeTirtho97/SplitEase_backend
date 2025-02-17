@@ -1,11 +1,6 @@
 const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
 
-const PaymentMethodSchema = new mongoose.Schema({
-  type: { type: String, required: true, enum: ["UPI", "PayPal", "Stripe"] },
-  details: { type: String, required: true },
-});
-
 const UserSchema = new mongoose.Schema(
   {
     fullName: { type: String, required: true },
@@ -24,8 +19,12 @@ const UserSchema = new mongoose.Schema(
       default: "",
     },
     friends: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
-    paymentMethods: [PaymentMethodSchema],
-    groups: [{ type: mongoose.Schema.Types.ObjectId, ref: "Group" }],
+    paymentMethods: [
+      {
+        methodType: { type: String, required: true },
+        accountDetails: { type: String, required: true },
+      },
+    ],
   },
   { timestamps: true }
 );

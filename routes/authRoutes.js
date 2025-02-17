@@ -1,28 +1,39 @@
 const express = require("express");
-const { signupUser, loginUser } = require("../services/authService");
+const passport = require("passport");
+const {
+  signupUser,
+  loginUser,
+  googleAuthCallback,
+} = require("../services/authService");
+const protect = require("../middleware/authMiddleware");
 
 const router = express.Router();
 
-// Signup Route
+// ✅ Form-Based Signup & Login
 router.post("/signup", signupUser);
-
-// Login Route
 router.post("/login", loginUser);
 
-const passport = require("passport");
-const { googleAuthCallback } = require("../services/authService");
-
-// Google OAuth Login
+// ✅ Google OAuth Routes (Separate for Login & Signup)
 router.get(
-  "/google",
+  "/google/signup",
   passport.authenticate("google", { scope: ["profile", "email"] })
 );
 
-// Google OAuth Callback
+router.get(
+  "/google/login",
+  passport.authenticate("google", { scope: ["profile", "email"] })
+);
+
+// ✅ Google OAuth Callback (For Both Signup & Login)
 router.get(
   "/google/callback",
   passport.authenticate("google", { session: false }),
   googleAuthCallback
 );
+
+// ✅ **Protected Route (For Testing JWT Token)**
+router.get("/protected", protect, (req, res) => {
+  res.json({ message: "Access granted", user: req.user });
+});
 
 module.exports = router;

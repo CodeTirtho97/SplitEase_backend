@@ -2,6 +2,7 @@ require("dotenv").config();
 const express = require("express");
 const connectDB = require("./config/db");
 const { connectRedis } = require("./config/redis");
+const cors = require("cors");
 
 const profileRoutes = require("./routes/profileRoutes");
 const authRoutes = require("./routes/authRoutes");
@@ -16,6 +17,14 @@ const groupRoutes = require("./routes/groupRoutes");
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+app.use(
+  cors({
+    origin: process.env.FRONTEND_URL, // ✅ Allow frontend
+    methods: "GET,POST,PUT,DELETE, PATCH",
+    credentials: true,
+  })
+);
 
 // Connect to MongoDB & Redis with Error Handling
 (async () => {

@@ -8,8 +8,8 @@
     "test": "jest --runInBand --detectOpenHandles --forceExit"
   },
   "jest": {
-  "testEnvironment": "node",
-  "testSequencer": "./jestTestSequencer.js"
+    "testEnvironment": "node",
+    "testSequencer": "./jestTestSequencer.js"
   },
   "repository": {
     "type": "git",
@@ -29,6 +29,7 @@
     "bullmq": "^5.41.1",
     "cloudinary": "^2.5.1",
     "cors": "^2.8.5",
+    "crypto": "^1.0.1",
     "express": "^4.21.2",
     "express-rate-limit": "^7.5.0",
     "express-validator": "^7.2.1",
@@ -39,6 +40,7 @@
     "mongoose": "^8.10.1",
     "multer": "^1.4.5-lts.1",
     "multer-storage-cloudinary": "^4.0.0",
+    "nodemailer": "^6.10.0",
     "passport": "^0.7.0",
     "passport-google-oauth20": "^2.0.0",
     "redis": "^4.7.0",

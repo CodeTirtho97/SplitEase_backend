@@ -13,6 +13,8 @@ const UserSchema = new mongoose.Schema(
       },
     },
     password: { type: String },
+    resetPasswordToken: { type: String },
+    resetPasswordExpires: { type: Date },
     googleId: { type: String },
     profilePic: {
       type: String,
@@ -29,11 +31,18 @@ const UserSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// Hash password before saving
 UserSchema.pre("save", async function (next) {
   if (!this.isModified("password") || !this.password) return next();
-  const salt = await bcrypt.genSalt(12);
-  this.password = await bcrypt.hash(this.password, salt);
+
+  // Check if password is already hashed
+  const passwordIsHashed =
+    this.password.startsWith("$2a$") || this.password.startsWith("$2b$");
+
+  if (!passwordIsHashed) {
+    const salt = await bcrypt.genSalt(12);
+    this.password = await bcrypt.hash(this.password, salt);
+  }
+
   next();
 });
 

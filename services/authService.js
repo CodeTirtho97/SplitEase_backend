@@ -13,12 +13,22 @@ const generateToken = (userId) => {
 // ✅ Signup Function
 const signupUser = async (req, res) => {
   try {
-    const { fullName, email, gender, password } = req.body;
+    const { fullName, email, gender, password, confirmPassword } = req.body;
+
+    // 🔹 Validate all fields
+    if (!fullName || !email || !password || !confirmPassword || !gender) {
+      return res.status(400).json({ message: "All fields are required!" });
+    }
 
     // Check if user already exists
     const existingUser = await User.findOne({ email });
     if (existingUser) {
-      return res.status(400).json({ message: "User already exists" });
+      return res.status(400).json({ message: "Email already in use!" });
+    }
+
+    // Check if passwords match
+    if (password !== confirmPassword) {
+      return res.status(400).json({ message: "Passwords do not match" });
     }
 
     // Create new user

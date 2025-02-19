@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const bcrypt = require("bcryptjs");
 const User = require("../models/User");
 const cloudinary = require("../config/cloudinary");
 
@@ -6,9 +7,24 @@ const cloudinary = require("../config/cloudinary");
 const uploadProfilePicture = async (req, res) => {
   try {
     if (!req.file) {
+      return res.status(400).json({ message: "No file uploaded!" });
+    }
+
+    const allowedFormats = ["image/jpeg", "image/jpg", "image/png"];
+    const maxSize = 100 * 1024; // 100KB
+
+    // ✅ Validate File Format
+    if (!allowedFormats.includes(req.file.mimetype)) {
       return res
         .status(400)
-        .json({ message: "No file uploaded. Ensure you selected an image." });
+        .json({ message: "Invalid format! Use JPG, JPEG, PNG." });
+    }
+
+    // ✅ Validate File Size
+    if (req.file.size > maxSize) {
+      return res
+        .status(400)
+        .json({ message: "File too large! Max size: 100KB." });
     }
 
     const user = await User.findById(req.user.id);
@@ -16,13 +32,13 @@ const uploadProfilePicture = async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
 
-    // Delete old profile picture if it exists
+    // Delete old profile picture if exists
     if (user.profilePic && user.profilePic.includes("cloudinary")) {
       const publicId = user.profilePic.split("/").pop().split(".")[0]; // Extract public ID
       await cloudinary.uploader.destroy(`profile_pics/${publicId}`);
     }
 
-    // Update user profile with new picture URL
+    // ✅ Save new profile pic
     user.profilePic = req.file.path;
     await user.save();
 
@@ -31,7 +47,6 @@ const uploadProfilePicture = async (req, res) => {
       profilePic: user.profilePic,
     });
   } catch (error) {
-    //console.error("Profile Picture Upload Error:", error);
     res.status(500).json({ message: "Server Error", error: error.message });
   }
 };
@@ -50,7 +65,7 @@ const updateProfile = async (req, res) => {
     if (req.body.profilePic) user.profilePic = req.body.profilePic;
 
     await user.save();
-    console.log("Updated Profile Successfully:", user);
+    //console.log("Updated Profile Successfully:", user);
 
     res.status(200).json({
       message: "Profile updated successfully",
@@ -65,13 +80,15 @@ const updateProfile = async (req, res) => {
 // Fetch User Profile (Including Profile Pic)
 const getUserProfile = async (req, res) => {
   try {
-    const user = await User.findById(req.user.id).select("-password");
+    const user = await User.findById(req.user.id)
+      .select("-password")
+      .populate("friends", "fullName email");
     if (!user) return res.status(404).json({ message: "User not found" });
 
     res.json({
       fullName: user.fullName,
       email: user.email,
-      gender: user.gender || "",
+      gender: user.gender || "male",
       profilePic: user.profilePic || "",
       friends: user.friends,
       paymentMethods: user.paymentMethods,
@@ -85,15 +102,19 @@ const getUserProfile = async (req, res) => {
 // ✅ Change Password Function
 const changePassword = async (req, res) => {
   try {
+    //console.log("🔹 Received Change Password Request:", req.body);
     const { oldPassword, newPassword, confirmNewPassword } = req.body;
 
     if (!oldPassword || !newPassword || !confirmNewPassword) {
+      //console.log("❌ Missing Fields in Request");
       return res.status(400).json({ message: "All fields are required" });
     }
     if (newPassword !== confirmNewPassword) {
+      //console.log("❌ New Passwords Do Not Match");
       return res.status(400).json({ message: "New passwords do not match" });
     }
     if (newPassword.length < 8) {
+      //console.log("❌ Password Too Short");
       return res
         .status(400)
         .json({ message: "Password must be at least 8 characters long" });
@@ -102,18 +123,21 @@ const changePassword = async (req, res) => {
     // Find user
     const user = await User.findById(req.user.id);
     if (!user) {
+      //console.log("❌ User Not Found");
       return res.status(404).json({ message: "User not found" });
     }
 
     // Verify old password
     const isMatch = await bcrypt.compare(oldPassword, user.password);
     if (!isMatch) {
+      //console.log("❌ Incorrect Old Password");
       return res.status(400).json({ message: "Incorrect old password" });
     }
 
     // Check if new password is same as old one
     const isSamePassword = await bcrypt.compare(newPassword, user.password);
     if (isSamePassword) {
+      //console.log("❌ Cannot Use Previous Password");
       return res.status(400).json({
         message: "Choose a different password than the previous one!",
       });
@@ -124,6 +148,7 @@ const changePassword = async (req, res) => {
     user.password = await bcrypt.hash(newPassword, salt);
 
     await user.save();
+    //console.log("✅ Password Updated Successfully!");
     res.json({ message: "Password updated successfully" });
   } catch (error) {
     console.error("Change Password Error:", error);
@@ -169,7 +194,7 @@ const searchFriends = async (req, res) => {
       .status(200)
       .json({ message: "Matching friends found", friends: availableFriends });
   } catch (error) {
-    console.error("Friend Search Error:", error);
+    //console.error("Friend Search Error:", error);
     res.status(500).json({ message: "Server Error", error: error.message });
   }
 };
@@ -204,7 +229,7 @@ const addFriend = async (req, res) => {
 
     res.status(200).json({ message: "Friend added successfully!", friendId });
   } catch (error) {
-    console.error("Add Friend Error:", error);
+    //console.error("Add Friend Error:", error);
     res.status(500).json({ message: "Server Error", error: error.message });
   }
 };
@@ -254,7 +279,44 @@ const addPaymentMethod = async (req, res) => {
       paymentMethods: user.paymentMethods,
     });
   } catch (error) {
-    console.error("Add Payment Method Error:", error);
+    //console.error("Add Payment Method Error:", error);
+    res.status(500).json({ message: "Server Error", error: error.message });
+  }
+};
+
+const deleteFriend = async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    // Remove friend ID from the array
+    user.friends = user.friends.filter(
+      (friend) => friend.toString() !== req.params.friendId
+    );
+    await user.save();
+
+    res.json({ message: "Friend removed successfully", friends: user.friends });
+  } catch (error) {
+    res.status(500).json({ message: "Server Error", error: error.message });
+  }
+};
+
+const deletePayment = async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    // Remove payment method from the array
+    user.paymentMethods = user.paymentMethods.filter(
+      (payment) => payment._id.toString() !== req.params.paymentId
+    );
+    await user.save();
+
+    res.json({
+      message: "Payment method removed successfully",
+      paymentMethods: user.paymentMethods,
+    });
+  } catch (error) {
     res.status(500).json({ message: "Server Error", error: error.message });
   }
 };
@@ -267,4 +329,6 @@ module.exports = {
   addFriend,
   addPaymentMethod,
   updateProfile,
+  deleteFriend,
+  deletePayment,
 };

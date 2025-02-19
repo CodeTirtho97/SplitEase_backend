@@ -16,10 +16,10 @@ router.post("/signup", signupUser);
 router.post("/login", loginUser);
 
 // ✅ Google OAuth Routes (Separate for Login & Signup)
-router.get(
-  "/google/signup",
-  passport.authenticate("google", { scope: ["profile", "email"] })
-);
+// router.get(
+//   "/google/signup",
+//   passport.authenticate("google", { scope: ["profile", "email"] })
+// );
 
 router.get(
   "/google/login",

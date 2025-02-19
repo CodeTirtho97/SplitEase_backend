@@ -7,6 +7,8 @@ const {
   updateProfile,
   changePassword,
   searchFriends,
+  deleteFriend,
+  deletePayment,
 } = require("../services/profileService");
 const protect = require("../middleware/authMiddleware"); // Import Auth Middleware
 const upload = require("../middleware/multer");
@@ -38,5 +40,11 @@ router.post("/search-friends", protect, searchFriends);
 
 // ✅ Add Payment Method
 router.post("/add-payment", protect, addPaymentMethod);
+
+// ✅ Delete Friend Method
+router.delete("/delete-friend/:friendId", protect, deleteFriend);
+
+// ✅ Delete Payment Method
+router.delete("/delete-payment/:paymentId", protect, deletePayment);
 
 module.exports = router;

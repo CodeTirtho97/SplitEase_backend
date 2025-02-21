@@ -92,7 +92,7 @@ const getUserProfile = async (req, res) => {
       profilePic: user.profilePic || "",
       friends: user.friends,
       paymentMethods: user.paymentMethods,
-      groups: user.groups, // Groups will be auto-updated
+      //groups: user.groups, // Groups will be auto-updated
     });
   } catch (error) {
     res.status(500).json({ error: "Server Error", details: error.message });

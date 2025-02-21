@@ -3,7 +3,7 @@ const bcrypt = require("bcryptjs");
 
 const UserSchema = new mongoose.Schema(
   {
-    fullName: { type: String, required: true },
+    fullName: { type: String, required: true, maxlength: 30 },
     email: { type: String, required: true, unique: true },
     gender: {
       type: String,
@@ -27,7 +27,7 @@ const UserSchema = new mongoose.Schema(
         accountDetails: { type: String, required: true },
       },
     ],
-    groups: [{ type: mongoose.Schema.Types.ObjectId, ref: "Group" }],
+    //groups: [{ type: mongoose.Schema.Types.ObjectId, ref: "Group" }],
   },
   { timestamps: true }
 );

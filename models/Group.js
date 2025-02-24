@@ -13,8 +13,8 @@ const groupSchema = new mongoose.Schema({
   },
   type: {
     type: String,
-    enum: ["Food", "Entertainment", "Travel", "Utilities", "Other"],
-    default: "Other",
+    enum: ["Travel", "Household", "Event", "Work", "Friends"],
+    default: "Friends",
     required: true,
   },
   completed: {

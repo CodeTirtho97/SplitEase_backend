@@ -27,7 +27,6 @@ const transactionSchema = new mongoose.Schema({
   mode: {
     type: String,
     enum: ["UPI", "Stripe", "PayPal"],
-    required: true,
   },
   status: {
     type: String,

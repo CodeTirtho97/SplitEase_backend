@@ -96,8 +96,8 @@ const createExpense = async (req, res) => {
       payeeId, // Extract payeeId from the payload
     } = req.body;
 
-    console.log("Expense type:", type);
-    console.log("Received payload:", JSON.stringify(req.body, null, 2)); // Log the full payload for debugging
+    //console.log("Expense type:", type);
+    //("Received payload:", JSON.stringify(req.body, null, 2)); // Log the full payload for debugging
 
     if (
       !totalAmount ||
@@ -130,14 +130,14 @@ const createExpense = async (req, res) => {
 
     // Ensure the payer exists and is a valid user
     const payerUser = await User.findById(payerId);
-    console.log("Payer user found:", JSON.stringify(payerUser, null, 2)); // Debug payer
+    //console.log("Payer user found:", JSON.stringify(payerUser, null, 2)); // Debug payer
     if (!payerUser) {
       return res.status(400).json({ message: "Payee does not exist." });
     }
 
     // Convert participants to ObjectId & Validate (including payer if present, but ensuring at least one other participant)
     let participantsObjectIds = participants.map((id) => {
-      console.log("Validating participant ID:", id); // Debug each participant ID
+      //console.log("Validating participant ID:", id); // Debug each participant ID
       if (!mongoose.Types.ObjectId.isValid(id)) {
         throw new Error(`Invalid participant ID: ${id}`);
       }
@@ -166,19 +166,19 @@ const createExpense = async (req, res) => {
     const existingUsers = await User.find({
       _id: { $in: uniqueParticipants },
     });
-    console.log(
-      "Existing users found (including payer if listed):",
-      JSON.stringify(existingUsers, null, 2)
-    ); // Debug existing users
+    // console.log(
+    //   "Existing users found (including payer if listed):",
+    //   JSON.stringify(existingUsers, null, 2)
+    // ); // Debug existing users
 
     if (existingUsers.length !== uniqueParticipants.length) {
       const missingIds = uniqueParticipants.filter(
         (id) => !existingUsers.some((user) => user._id.equals(id))
       );
-      console.log(
-        "Missing participant IDs:",
-        JSON.stringify(missingIds, null, 2)
-      ); // Debug missing IDs
+      // console.log(
+      //   "Missing participant IDs:",
+      //   JSON.stringify(missingIds, null, 2)
+      // ); // Debug missing IDs
       return res
         .status(400)
         .json({ message: "One or more participants do not exist." });
@@ -223,10 +223,10 @@ const createExpense = async (req, res) => {
       splitValues
     );
 
-    console.log(
-      "Generated split details:",
-      JSON.stringify(splitDetails, null, 2)
-    ); // Debug split details
+    // console.log(
+    //   "Generated split details:",
+    //   JSON.stringify(splitDetails, null, 2)
+    // ); // Debug split details
 
     // Ensure splitDetails includes only non-self transactions (payer to others)
     splitDetails = splitDetails.filter(
@@ -384,7 +384,18 @@ const getExpenseSummary = async (req, res) => {
       return res.status(401).json({ message: "User not authenticated" });
     }
 
-    const expenses = await Expense.find({ participants: userId });
+    // Find all groups where the user is a member
+    const userGroups = await Group.find({ members: userId }).select("_id");
+    const groupIds = userGroups.map((group) => group._id);
+
+    // Find all expenses where the user is a participant or the expense belongs to one of the user's groups
+    const expenses = await Expense.find({
+      $or: [
+        { participants: userId }, // User is a participant
+        { groupId: { $in: groupIds } }, // Expense belongs to a group the user is in
+      ],
+    }).populate("participants", "fullName"); // Populate participant names for debugging
+
     if (!expenses || expenses.length === 0) {
       return res.status(200).json({
         message: "Expense summary fetched successfully",
@@ -408,18 +419,8 @@ const getExpenseSummary = async (req, res) => {
     });
     if (cachedRate && new Date() - cachedRate.timestamp < 24 * 60 * 60 * 1000) {
       exchangeRates = cachedRate.rates;
-      // console.log(
-      //   "Using cached exchange rates (last updated:",
-      //   cachedRate.timestamp,
-      //   "):",
-      //   exchangeRates
-      // );
     } else {
       exchangeRates = await fetchAndStoreExchangeRates();
-      console.log(
-        "Fetched new exchange rates (cache expired or missing):",
-        exchangeRates
-      );
     }
 
     // Function to convert amount to target currency
@@ -443,24 +444,31 @@ const getExpenseSummary = async (req, res) => {
       return amount * (rateTo / rateFrom);
     };
 
-    // Aggregate expenses, converting each amount to target currencies
+    // Aggregate expenses, considering user-specific splits and transaction status
     const convertedSummary = targetCurrencies.reduce((acc, currency) => {
       let totalExpenses = 0,
         totalPending = 0,
         totalSettled = 0;
 
       expenses.forEach((expense) => {
+        // Find the user's split in this expense
+        const userSplit = expense.splitDetails.find((split) =>
+          split.userId.equals(userId)
+        );
+        if (!userSplit) return; // Skip if user isn’t in this expense split
+
         const convertedAmount = convertToCurrency(
-          expense.totalAmount,
+          userSplit.amountOwed,
           expense.currency,
           currency
         );
-        totalExpenses += convertedAmount;
+        totalExpenses += convertedAmount; // Total amount the user owes for this expense
 
-        if (expense.expenseStatus) {
-          totalSettled += convertedAmount;
+        // Check if the user's split is settled based on transactionId
+        if (userSplit.transactionId) {
+          totalSettled += convertedAmount; // Add to settled if transactionId exists
         } else {
-          totalPending += convertedAmount;
+          totalPending += convertedAmount; // Add to pending if no transactionId
         }
       });
 
@@ -573,7 +581,18 @@ const getExpenseBreakdown = async (req, res) => {
       return res.status(401).json({ message: "User not authenticated" });
     }
 
-    const expenses = await Expense.find({ participants: userId });
+    // Find all groups where the user is a member
+    const userGroups = await Group.find({ members: userId }).select("_id");
+    const groupIds = userGroups.map((group) => group._id);
+
+    // Find all expenses where the user is a participant or the expense belongs to one of the user's groups
+    const expenses = await Expense.find({
+      $or: [
+        { participants: userId }, // User is a participant
+        { groupId: { $in: groupIds } }, // Expense belongs to a group the user is in
+      ],
+    }).populate("participants", "fullName"); // Populate participant names for debugging
+
     const BASE_CURRENCY = process.env.BASE_CURRENCY || "INR";
     const targetCurrency = req.query.currency
       ? req.query.currency.toString().toUpperCase()
@@ -586,13 +605,11 @@ const getExpenseBreakdown = async (req, res) => {
     });
     if (cachedRate && new Date() - cachedRate.timestamp < 24 * 60 * 60 * 1000) {
       exchangeRates = cachedRate.rates;
-      //console.log("Using cached exchange rates for breakdown:", exchangeRates);
     } else {
       exchangeRates = await fetchAndStoreExchangeRates();
-      //console.log("Fetched new exchange rates for breakdown:", exchangeRates);
     }
 
-    // Function to convert amount to target currency (INR in this case)
+    // Function to convert amount to target currency
     const convertToCurrency = (amount, fromCurrency, toCurrency) => {
       const normalizedFrom = fromCurrency === "EURO" ? "EUR" : fromCurrency;
       const normalizedTo = toCurrency === "EURO" ? "EUR" : toCurrency;
@@ -613,30 +630,60 @@ const getExpenseBreakdown = async (req, res) => {
       return Math.round(amount * (rateTo / rateFrom) * 100) / 100; // Round to 2 decimal places
     };
 
-    // Aggregate breakdown by type
-    const breakdown = {}; // Removed type annotation
-    const monthlyTrend = {}; // Removed type annotation
+    // Aggregate breakdown and trend by type and month, considering user-specific splits
+    const breakdown = {}; // Total expenses by type (no distinction between pending/settled yet)
+    const monthlyTrend = {}; // Total expenses by month (no distinction between pending/settled yet)
+    const breakdownPending = {}; // Pending expenses by type
+    const breakdownSettled = {}; // Settled expenses by type
+    const monthlyTrendPending = {}; // Pending expenses by month
+    const monthlyTrendSettled = {}; // Settled expenses by month
 
     expenses.forEach((expense) => {
+      // Find the user's split in this expense
+      const userSplit = expense.splitDetails.find((split) =>
+        split.userId.equals(userId)
+      );
+      if (!userSplit) return; // Skip if user isn’t in this expense split
+
       const convertedAmount = convertToCurrency(
-        expense.totalAmount,
+        userSplit.amountOwed,
         expense.currency,
         targetCurrency
       );
+
+      // Aggregate total expenses by type and month (matching Expense Cards totalExpenses)
       breakdown[expense.type] =
         (breakdown[expense.type] || 0) + convertedAmount;
-
       const month = new Date(expense.createdAt).toLocaleString("default", {
         month: "long",
         year: "numeric",
       });
       monthlyTrend[month] = (monthlyTrend[month] || 0) + convertedAmount;
+
+      // Distinguish between pending and settled based on transactionId
+      if (userSplit.transactionId) {
+        // Settled
+        breakdownSettled[expense.type] =
+          (breakdownSettled[expense.type] || 0) + convertedAmount;
+        monthlyTrendSettled[month] =
+          (monthlyTrendSettled[month] || 0) + convertedAmount;
+      } else {
+        // Pending
+        breakdownPending[expense.type] =
+          (breakdownPending[expense.type] || 0) + convertedAmount;
+        monthlyTrendPending[month] =
+          (monthlyTrendPending[month] || 0) + convertedAmount;
+      }
     });
 
     res.status(200).json({
       message: "Expense breakdown fetched successfully",
-      breakdown,
-      monthlyTrend,
+      breakdown, // Total expenses by type (matches totalExpenses in Expense Cards)
+      monthlyTrend, // Total expenses by month (matches totalExpenses in Expense Cards)
+      breakdownPending, // Pending expenses by type (matches totalPending in Expense Cards)
+      breakdownSettled, // Settled expenses by type (matches totalSettled in Expense Cards)
+      monthlyTrendPending, // Pending expenses by month
+      monthlyTrendSettled, // Settled expenses by month
     });
   } catch (error) {
     console.error(
@@ -648,12 +695,29 @@ const getExpenseBreakdown = async (req, res) => {
   }
 };
 
+const getExchangeRates = async () => {
+  try {
+    const exchangeRates = await ExchangeRate.findOne()
+      .sort({ timestamp: -1 }) // Get the most recent exchange rate
+      .exec();
+    if (!exchangeRates) {
+      throw new Error("No exchange rates found in database");
+    }
+    return exchangeRates;
+  } catch (error) {
+    console.error("Error fetching exchange rates:", error);
+    throw error;
+  }
+};
+
 module.exports = {
   createExpense,
   getGroupExpenses,
   getUserExpenses,
   getExpenseById,
   deleteExpense,
+  ExchangeRate,
+  getExchangeRates,
   getExpenseSummary, // NEW
   updateExchangeRates,
   getRecentExpenses, // NEW

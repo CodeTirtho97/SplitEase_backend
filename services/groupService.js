@@ -209,8 +209,8 @@ const viewGroupDetails = async (req, res) => {
 
     // 🔹 Fetch group details and populate references
     const group = await Group.findById(groupId)
-      .populate("createdBy", "name email")
-      .populate("members", "name email gender");
+      .populate("createdBy", "fullName email") // Use "fullName" for consistency
+      .populate("members", "fullName email gender");
 
     if (!group) {
       return res.status(404).json({ message: "Group not found." });
@@ -220,22 +220,23 @@ const viewGroupDetails = async (req, res) => {
 
     // 🔹 Fetch expenses linked to this group
     const expenses = await Expense.find({ groupId })
-      .populate("payer", "name email")
-      .populate("participants", "name email");
+      .populate("payer", "fullName email")
+      .populate("participants", "fullName email");
 
     // ✅ Ensure expenses array exists
     if (!expenses || expenses.length === 0) {
       console.warn(`⚠️ No expenses found for group ${groupId}`);
     }
 
-    // 🔹 Fetch recent transactions (limit 5)
-    const recentTransactions = await Transaction.find({
+    // 🔹 Fetch recent completed transactions (limit 5)
+    const completedTransactions = await Transaction.find({
       expenseId: { $in: expenses.map((e) => e._id) },
+      status: "Completed", // Ensure this matches your Transaction model status
     })
       .sort({ createdAt: -1 })
       .limit(5)
-      .populate("sender", "name")
-      .populate("receiver", "name");
+      .populate("sender", "fullName")
+      .populate("receiver", "fullName");
 
     // 🔹 Fetch pending transactions, sorted by highest amount
     const pendingTransactions = await Transaction.find({
@@ -244,12 +245,16 @@ const viewGroupDetails = async (req, res) => {
     })
       .sort({ amount: -1 })
       .limit(5)
-      .populate("sender", "name")
-      .populate("receiver", "name");
+      .populate("sender", "fullName")
+      .populate("receiver", "fullName");
+
+    // ✅ Debug: Log transaction statuses to verify
+    console.log("Completed Transactions:", completedTransactions);
+    console.log("Pending Transactions:", pendingTransactions);
 
     // ✅ Ensure transactions arrays exist
-    const safeRecentTransactions = Array.isArray(recentTransactions)
-      ? recentTransactions
+    const safeCompletedTransactions = Array.isArray(completedTransactions)
+      ? completedTransactions
       : [];
     const safePendingTransactions = Array.isArray(pendingTransactions)
       ? pendingTransactions
@@ -259,8 +264,8 @@ const viewGroupDetails = async (req, res) => {
       message: "Group details fetched successfully",
       group,
       expenses,
-      recentTransactions: safeRecentTransactions,
-      pendingTransactions: safePendingTransactions,
+      completedTransactions: safeCompletedTransactions, // Recent completed transactions
+      pendingTransactions: safePendingTransactions, // Top pending transactions
     });
   } catch (error) {
     console.error("❌ Error fetching group details:", error);

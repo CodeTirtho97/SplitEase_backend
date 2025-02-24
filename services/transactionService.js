@@ -1,155 +1,191 @@
 const mongoose = require("mongoose");
 const Transaction = require("../models/Transaction");
 const Expense = require("../models/Expense");
+const Group = require("../models/Group");
+const User = require("../models/User");
 
-// ✅ Fetch all transactions for a user
-const getUserTransactions = async (req, res) => {
+// Get pending transactions for the logged-in user (as sender, status: "Pending")
+const getPendingTransactions = async (req, res) => {
   try {
-    const userId = req.user.id;
+    const userId = new mongoose.Types.ObjectId(req.user.id);
 
-    if (!mongoose.Types.ObjectId.isValid(userId)) {
-      return res.status(400).json({ message: "Invalid User ID format." });
-    }
+    const pendingTransactions = await Transaction.find({
+      sender: userId,
+      status: "Pending",
+    })
+      .sort({ createdAt: -1 })
+      .populate("sender", "fullName email")
+      .populate("receiver", "fullName email")
+      .populate("expenseId", "description totalAmount currency groupId");
+
+    const transformedTransactions = await Promise.all(
+      pendingTransactions.map(async (transaction) => {
+        const expense = transaction.expenseId;
+        const group = expense.groupId
+          ? await Group.findById(expense.groupId).select("name")
+          : null;
+
+        return {
+          transactionId: transaction.transactionId, // Use hashed transactionId
+          date: transaction.createdAt.toISOString().split("T")[0], // Format as YYYY-MM-DD
+          expenseName: expense.description || "Unnamed Expense",
+          groupName: group?.name || "No Group",
+          owedFrom: transaction.receiver.fullName || "Unknown",
+          amount: transaction.amount,
+          currency: transaction.currency,
+        };
+      })
+    );
+
+    res.status(200).json({
+      message: "Pending transactions fetched successfully",
+      transactions: transformedTransactions,
+    });
+  } catch (error) {
+    console.error("Error fetching pending transactions:", error);
+    res.status(500).json({ message: "Server Error", error: error.message });
+  }
+};
+
+// Get transaction history for the logged-in user (last 10, status: "Success" or "Failed")
+const getTransactionHistory = async (req, res) => {
+  try {
+    const userId = new mongoose.Types.ObjectId(req.user.id);
 
     const transactions = await Transaction.find({
       $or: [{ sender: userId }, { receiver: userId }],
-    }).populate(
-      "expenseId sender receiver",
-      "description totalAmount fullName email"
-    );
+      status: { $in: ["Success", "Failed"] },
+    })
+      .sort({ updatedAt: -1 }) // Sort by updatedAt for settled transactions
+      .limit(10)
+      .populate("sender", "fullName email")
+      .populate("receiver", "fullName email")
+      .populate("expenseId", "description totalAmount currency");
 
-    res
-      .status(200)
-      .json({ message: "Transactions fetched successfully.", transactions });
-  } catch (error) {
-    console.error("Error fetching transactions:", error);
-    res.status(500).json({ message: "Server Error", error: error.message });
-  }
-};
-
-// ✅ Fetch all transactions for a specific group
-const getGroupTransactions = async (req, res) => {
-  try {
-    const { groupId } = req.params;
-
-    if (!mongoose.Types.ObjectId.isValid(groupId)) {
-      return res.status(400).json({ message: "Invalid group ID format." });
-    }
-
-    // ✅ Use `$lookup` for better efficiency
-    const transactions = await Transaction.aggregate([
-      {
-        $lookup: {
-          from: "expenses",
-          localField: "expenseId",
-          foreignField: "_id",
-          as: "expense",
-        },
-      },
-      { $match: { "expense.groupId": new mongoose.Types.ObjectId(groupId) } },
-      {
-        $lookup: {
-          from: "users",
-          localField: "sender",
-          foreignField: "_id",
-          as: "sender",
-        },
-      },
-      {
-        $lookup: {
-          from: "users",
-          localField: "receiver",
-          foreignField: "_id",
-          as: "receiver",
-        },
-      },
-      {
-        $project: {
-          "expense.description": 1,
-          "expense.totalAmount": 1,
-          sender: { $arrayElemAt: ["$sender", 0] },
-          receiver: { $arrayElemAt: ["$receiver", 0] },
-          amount: 1,
-          mode: 1,
-          status: 1,
-          createdAt: 1,
-        },
-      },
-    ]);
-
-    if (!transactions.length) {
-      return res
-        .status(404)
-        .json({ message: "No transactions found for this group." });
-    }
+    const transformedTransactions = transactions.map((transaction) => ({
+      transactionId: transaction.transactionId, // Use hashed transactionId
+      paymentDate: transaction.updatedAt.toISOString().split("T")[0], // Format as YYYY-MM-DD
+      paidTo: transaction.receiver.fullName || "Unknown",
+      amount: transaction.amount,
+      currency: transaction.currency,
+      mode: transaction.mode || "N/A",
+      status: transaction.status,
+    }));
 
     res.status(200).json({
-      message: "Group transactions fetched successfully.",
-      transactions,
+      message: "Transaction history fetched successfully",
+      transactions: transformedTransactions,
     });
   } catch (error) {
-    console.error("Error fetching group transactions:", error);
+    console.error("Error fetching transaction history:", error);
     res.status(500).json({ message: "Server Error", error: error.message });
   }
 };
 
-// ✅ Update transaction status (User attempts payment)
-const updateTransactionStatus = async (req, res) => {
+// Settle a transaction (update status and mode after payment)
+const settleTransaction = async (req, res) => {
   try {
-    const { transactionId, status } = req.body;
+    const { transactionId } = req.params;
+    const { status, mode } = req.body; // Removed pin from required fields
 
-    if (!transactionId || !status) {
-      return res
-        .status(400)
-        .json({ message: "Transaction ID and status are required." });
-    }
-
-    if (!mongoose.Types.ObjectId.isValid(transactionId)) {
-      return res.status(400).json({ message: "Invalid transaction ID." });
-    }
+    console.log("Received transactionId:", transactionId); // Debug the received transactionId
 
     if (!["Success", "Failed"].includes(status)) {
       return res
         .status(400)
-        .json({ message: "Invalid status. Choose 'Success' or 'Failed'." });
+        .json({ message: "Status must be 'Success' or 'Failed'" });
     }
 
-    // ✅ Find transaction & validate
-    const transaction = await Transaction.findById(transactionId);
-    if (!transaction) {
-      return res.status(404).json({ message: "Transaction not found." });
-    }
-
-    // ✅ Ensure only the **sender** (who is paying) can update status
-    if (transaction.sender.toString() !== req.user.id) {
-      return res.status(403).json({
-        message: "Unauthorized: Only the sender can update this transaction.",
-      });
-    }
-
-    // ✅ Prevent re-updating if already marked as "Success"
-    if (transaction.status === "Success") {
+    if (!["UPI", "PayPal", "Stripe"].includes(mode)) {
       return res
         .status(400)
-        .json({ message: "Transaction is already marked as 'Success'." });
+        .json({ message: "Invalid payment mode. Use UPI, PayPal, or Stripe." });
     }
 
-    // ✅ Update transaction status
+    // Find transaction using the hashed transactionId as a string
+    const transaction = await Transaction.findOne({
+      transactionId: transactionId,
+    }); // Use transactionId as a string
+    if (!transaction) {
+      return res
+        .status(404)
+        .json({ message: `Transaction not found for ID: ${transactionId}` });
+    }
+
+    // Check if the logged-in user is authorized to settle (e.g., sender)
+    const userId = new mongoose.Types.ObjectId(req.user.id);
+    if (!transaction.sender.equals(userId)) {
+      return res
+        .status(403)
+        .json({ message: "Unauthorized to settle this transaction" });
+    }
+
+    // Simulate payment gateway success (dummy check)
+    const isPaymentSuccessful = Math.random() > 0.1; // 90% chance of success (dummy)
+    if (!isPaymentSuccessful) {
+      return res
+        .status(400)
+        .json({ message: "Payment failed via dummy gateway" });
+    }
+
+    // Update transaction with mode and status
+    transaction.mode = mode;
     transaction.status = status;
+    transaction.updatedAt = new Date();
     await transaction.save();
 
-    res
-      .status(200)
-      .json({ message: "Transaction updated successfully.", transaction });
+    // Update the related Expense to reflect the settled transaction
+    if (status === "Success") {
+      const expense = await Expense.findById(transaction.expenseId);
+      if (expense) {
+        // Update splitDetails to mark the specific transaction as paid
+        expense.splitDetails = expense.splitDetails.map((detail) => {
+          if (
+            detail.userId.equals(transaction.sender) && // Sender (who owes)
+            detail.amountOwed === transaction.amount && // Match amount
+            !detail.transactionId // Ensure it hasn't been marked already
+          ) {
+            return {
+              ...detail,
+              transactionId: transaction._id, // Use MongoDB _id for tracking, not hashed transactionId
+              expenseStatus: true, // Mark this split as completed
+            };
+          }
+          return detail;
+        });
+
+        // Update expenseStatus if all splitDetails are settled
+        const allSettled = expense.splitDetails.every(
+          (detail) => detail.transactionId
+        );
+        if (allSettled) {
+          expense.expenseStatus = true; // Mark entire expense as completed
+        }
+
+        await expense.save();
+      }
+    }
+
+    res.status(200).json({
+      message: `Transaction ${status.toLowerCase()}fully settled`,
+      transaction: {
+        transactionId: transaction.transactionId, // Return the hashed transactionId
+        paymentDate: transaction.updatedAt.toISOString().split("T")[0],
+        paidTo: transaction.receiver.fullName || "Unknown",
+        amount: transaction.amount,
+        currency: transaction.currency,
+        mode: transaction.mode,
+        status: transaction.status,
+      },
+    });
   } catch (error) {
-    console.error("Error updating transaction:", error);
+    console.error("Error settling transaction:", error);
     res.status(500).json({ message: "Server Error", error: error.message });
   }
 };
 
-// ✅ Ensure all functions are correctly exported
 module.exports = {
-  getUserTransactions,
-  getGroupTransactions,
-  updateTransactionStatus,
+  getPendingTransactions,
+  getTransactionHistory,
+  settleTransaction,
 };

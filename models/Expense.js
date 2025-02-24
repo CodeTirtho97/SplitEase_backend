@@ -69,16 +69,7 @@ const expenseSchema = new mongoose.Schema({
         type: mongoose.Schema.Types.ObjectId,
         ref: "Transaction",
       },
-    },
-  ],
-  splitDetails: [
-    {
-      userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-      amountOwed: Number,
-      transactionId: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "Transaction",
-      },
+      transactionStatus: { type: Boolean, default: false },
     },
   ],
   createdAt: {

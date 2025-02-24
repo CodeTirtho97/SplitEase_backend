@@ -25,6 +25,6 @@ router.delete("/delete/:expenseId", protect, deleteExpense);
 router.get("/summary", protect, getExpenseSummary);
 router.post("/update-exchange-rates", protect, updateExchangeRates);
 router.get("/recent", protect, getRecentExpenses);
-router.get("/breakdown", protect, getExpenseBreakdown);
+router.get("/breakdown/:currency", protect, getExpenseBreakdown);
 
 module.exports = router;

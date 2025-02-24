@@ -24,6 +24,19 @@ const expenseSchema = new mongoose.Schema({
     required: true,
     maxlength: 30,
   },
+  type: {
+    type: String,
+    enum: [
+      "Food",
+      "Transportation",
+      "Accommodation",
+      "Utilities",
+      "Entertainment",
+      "Miscellaneous",
+    ],
+    default: "Miscellaneous",
+    required: true,
+  },
   expenseStatus: {
     type: Boolean,
     default: false, // false = Not Completed, true = Completed

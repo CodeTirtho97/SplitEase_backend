@@ -5,24 +5,26 @@ const {
   getUserExpenses,
   getExpenseById,
   deleteExpense,
+  getExpenseSummary, // NEW
+  updateExchangeRates,
+  getRecentExpenses, // NEW
+  getExpenseBreakdown, // NEW
 } = require("../services/expenseService");
-const protect = require("../middleware/authMiddleware"); // Middleware to protect routes
+const protect = require("../middleware/authMiddleware");
 
 const router = express.Router();
 
-// ✅ Create a new expense
+// Existing endpoints
 router.post("/create", protect, createExpense);
-
-// ✅ Fetch all expenses for a specific group
 router.get("/group/:groupId", protect, getGroupExpenses);
-
-// ✅ Fetch all expenses for the logged-in user
 router.get("/my-expenses", protect, getUserExpenses);
-
-// ✅ Fetch a specific expense by ID
 router.get("/expense/:expenseId", protect, getExpenseById);
-
-// ✅ Route to delete an expense (Only Creator can delete)
 router.delete("/delete/:expenseId", protect, deleteExpense);
+
+// NEW endpoints for dashboard and charts
+router.get("/summary", protect, getExpenseSummary);
+router.post("/update-exchange-rates", protect, updateExchangeRates);
+router.get("/recent", protect, getRecentExpenses);
+router.get("/breakdown", protect, getExpenseBreakdown);
 
 module.exports = router;

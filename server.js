@@ -3,6 +3,7 @@ const express = require("express");
 const connectDB = require("./config/db");
 const { connectRedis } = require("./config/redis");
 const cors = require("cors");
+const cronJobs = require("./utils/cronJobs");
 
 const profileRoutes = require("./routes/profileRoutes");
 const authRoutes = require("./routes/authRoutes");

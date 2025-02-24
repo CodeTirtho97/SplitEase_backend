@@ -32,6 +32,8 @@ const calculateSplitDetails = (
       (sum, value) => sum + value.percentage,
       0
     );
+
+    //console.log(totalPercentage);
     if (totalPercentage !== 100) {
       throw new Error("Total percentage must be exactly 100%.");
     }

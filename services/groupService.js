@@ -37,13 +37,7 @@ const createGroup = async (req, res) => {
     }
 
     // ✅ Validate `type` field
-    const validTypes = [
-      "Food",
-      "Entertainment",
-      "Travel",
-      "Utilities",
-      "Other",
-    ];
+    const validTypes = ["Travel", "Household", "Event", "Work", "Friends"];
     if (!validTypes.includes(type)) {
       return res.status(400).json({ message: "Invalid group type." });
     }

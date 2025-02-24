@@ -14,6 +14,7 @@ require("./config/passport"); // Import Passport Config
 const expenseRoutes = require("./routes/expenseRoutes");
 const transactionRoutes = require("./routes/transactionRoutes");
 const groupRoutes = require("./routes/groupRoutes");
+const dashboardRoutes = require("./routes/dashboardRoutes");
 
 const app = express();
 app.use(express.json());
@@ -40,6 +41,7 @@ app.use(
 })();
 
 // Routes
+app.use("/api", dashboardRoutes);
 app.use("/api/profile", profileRoutes);
 app.use(passport.initialize());
 app.use("/api/auth", authRoutes);

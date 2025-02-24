@@ -1,27 +1,34 @@
 const express = require("express");
 const {
-  getUserTransactions,
-  updateTransactionStatus,
-  getGroupTransactions,
-} = require("../services/transactionService"); // Ensure correct imports
-
+  getPendingTransactions,
+  getTransactionHistory,
+  settleTransaction,
+} = require("../services/transactionService"); // Use the new service file
 const protect = require("../middleware/authMiddleware");
-const validateObjectId = require("../middleware/validateObjectId");
+
+// Custom middleware to validate transactionId (hashed string)
+const validateTransactionId = (req, res, next) => {
+  const { transactionId } = req.params;
+  if (!transactionId || typeof transactionId !== "string") {
+    return res.status(400).json({ message: "Invalid transaction ID format" });
+  }
+  next();
+};
 
 const router = express.Router();
 
-// Fetch user's transaction history
-router.get("/my-transactions", protect, getUserTransactions);
+// Fetch pending transactions for the logged-in user
+router.get("/pending", protect, getPendingTransactions);
 
-// Fetch all transactions for a specific group
-router.get("/group/:groupId", protect, validateObjectId, getGroupTransactions);
+// Fetch transaction history for the logged-in user
+router.get("/history", protect, getTransactionHistory);
 
-// Update transaction status (User marks payment as successful or failed)
+// Settle a transaction (update status and mode)
 router.put(
-  "/update-status/:transactionId",
+  "/:transactionId/settle",
   protect,
-  validateObjectId,
-  updateTransactionStatus
+  validateTransactionId,
+  settleTransaction
 );
 
 module.exports = router;

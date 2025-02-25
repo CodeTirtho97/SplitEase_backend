@@ -388,13 +388,16 @@ const getExpenseSummary = async (req, res) => {
     const userGroups = await Group.find({ members: userId }).select("_id");
     const groupIds = userGroups.map((group) => group._id);
 
-    // Find all expenses where the user is a participant or the expense belongs to one of the user's groups
+    // Find all expenses where the user is a participant, payer, or the expense belongs to one of the user's groups
     const expenses = await Expense.find({
       $or: [
         { participants: userId }, // User is a participant
+        { payer: userId }, // User is the payer
         { groupId: { $in: groupIds } }, // Expense belongs to a group the user is in
       ],
-    }).populate("participants", "fullName"); // Populate participant names for debugging
+    })
+      .populate("participants", "fullName") // Populate participant names for debugging
+      .populate("payer", "fullName"); // Populate payer details
 
     if (!expenses || expenses.length === 0) {
       return res.status(200).json({
@@ -425,8 +428,8 @@ const getExpenseSummary = async (req, res) => {
 
     // Function to convert amount to target currency
     const convertToCurrency = (amount, fromCurrency, toCurrency) => {
-      const normalizedFrom = fromCurrency === "EURO" ? "EUR" : fromCurrency;
-      const normalizedTo = toCurrency === "EURO" ? "EUR" : toCurrency;
+      const normalizedFrom = fromCurrency === "EUR" ? "EUR" : fromCurrency;
+      const normalizedTo = toCurrency === "EUR" ? "EUR" : toCurrency;
 
       if (normalizedFrom === normalizedTo) return amount;
       if (
@@ -444,31 +447,104 @@ const getExpenseSummary = async (req, res) => {
       return amount * (rateTo / rateFrom);
     };
 
-    // Aggregate expenses, considering user-specific splits and transaction status
+    // Function to calculate user's share as payer based on split type
+    const calculatePayerShare = (expense, userId) => {
+      if (
+        !expense.splitType ||
+        !expense.amount ||
+        expense.payer?.toString() !== userId
+      ) {
+        return 0; // User isn’t the payer or no split type/amount
+      }
+
+      let userShare = 0;
+      const totalAmount = expense.amount;
+
+      switch (expense.splitType) {
+        case "Equal":
+          // If equal split, user (payer) pays 100% minus the sum of participant shares
+          const participantCount = expense.participants.length;
+          if (participantCount > 0) {
+            const sharePerParticipant = totalAmount / (participantCount + 1); // +1 for payer
+            userShare = totalAmount - sharePerParticipant * participantCount; // Payer’s share
+          } else {
+            userShare = totalAmount; // Payer takes full amount if no participants
+          }
+          break;
+
+        case "Percentage":
+          // Sum all percentage values from splitDetails for participants
+          const participantPercentages = expense.splitDetails
+            .filter((split) => split.userId && !split.userId.equals(userId))
+            .reduce((sum, split) => sum + (split.percentage || 0), 0);
+          userShare = totalAmount * (1 - participantPercentages / 100); // Payer’s percentage share
+          break;
+
+        case "Custom":
+          // Sum all custom amounts from splitDetails for participants
+          const participantCustomAmounts = expense.splitDetails
+            .filter((split) => split.userId && !split.userId.equals(userId))
+            .reduce((sum, split) => sum + (split.amountOwed || 0), 0);
+          userShare = totalAmount - participantCustomAmounts; // Payer’s remaining share
+          break;
+
+        default:
+          userShare = 0; // Default to 0 if split type is invalid
+      }
+
+      return userShare > 0 ? userShare : 0; // Ensure non-negative share
+    };
+
+    // Aggregate expenses, considering user-specific splits and transaction status (including payer logic)
     const convertedSummary = targetCurrencies.reduce((acc, currency) => {
       let totalExpenses = 0,
         totalPending = 0,
         totalSettled = 0;
 
       expenses.forEach((expense) => {
-        // Find the user's split in this expense
-        const userSplit = expense.splitDetails.find((split) =>
-          split.userId.equals(userId)
+        // Calculate user's share as a participant (if any)
+        const userAsParticipant = expense.splitDetails.find((split) =>
+          split.userId?.equals(userId)
         );
-        if (!userSplit) return; // Skip if user isn’t in this expense split
+        let userShare = 0;
 
-        const convertedAmount = convertToCurrency(
-          userSplit.amountOwed,
-          expense.currency,
-          currency
-        );
-        totalExpenses += convertedAmount; // Total amount the user owes for this expense
+        if (userAsParticipant) {
+          // User is a participant
+          const convertedAmount = convertToCurrency(
+            userAsParticipant.amountOwed || 0,
+            expense.currency,
+            currency
+          );
+          userShare = convertedAmount;
+          totalExpenses += userShare;
 
-        // Check if the user's split is settled based on transactionId
-        if (userSplit.transactionId) {
-          totalSettled += convertedAmount; // Add to settled if transactionId exists
-        } else {
-          totalPending += convertedAmount; // Add to pending if no transactionId
+          // Check if the user's split is settled based on transactionId
+          if (userAsParticipant.transactionId) {
+            totalSettled += userShare;
+          } else {
+            totalPending += userShare;
+          }
+        }
+
+        // Calculate user's share as the payer (if applicable)
+        const payerShare = calculatePayerShare(expense, userId);
+        if (payerShare > 0) {
+          const convertedPayerAmount = convertToCurrency(
+            payerShare,
+            expense.currency,
+            currency
+          );
+          totalExpenses += convertedPayerAmount; // Add to total expenses as payer
+
+          // Assume payer’s share is settled if transactionId exists for any split, otherwise pending
+          const anySplitSettled = expense.splitDetails.some(
+            (split) => split.transactionId
+          );
+          if (anySplitSettled) {
+            totalSettled += convertedPayerAmount;
+          } else {
+            totalPending += convertedPayerAmount;
+          }
         }
       });
 
@@ -611,8 +687,8 @@ const getExpenseBreakdown = async (req, res) => {
 
     // Function to convert amount to target currency
     const convertToCurrency = (amount, fromCurrency, toCurrency) => {
-      const normalizedFrom = fromCurrency === "EURO" ? "EUR" : fromCurrency;
-      const normalizedTo = toCurrency === "EURO" ? "EUR" : toCurrency;
+      const normalizedFrom = fromCurrency === "EUR" ? "EUR" : fromCurrency;
+      const normalizedTo = toCurrency === "EUR" ? "EUR" : toCurrency;
 
       if (normalizedFrom === normalizedTo) return amount;
       if (

@@ -88,7 +88,7 @@ const settleTransaction = async (req, res) => {
     const { transactionId } = req.params;
     const { status, mode } = req.body; // Removed pin from required fields
 
-    console.log("Received transactionId:", transactionId); // Debug the received transactionId
+    //console.log("Received transactionId:", transactionId); // Debug the received transactionId
 
     if (!["Success", "Failed"].includes(status)) {
       return res

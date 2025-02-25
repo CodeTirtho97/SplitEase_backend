@@ -15,32 +15,30 @@ const signupUser = async (req, res) => {
   try {
     const { fullName, email, gender, password, confirmPassword } = req.body;
 
-    // 🔹 Validate all fields
     if (!fullName || !email || !password || !confirmPassword || !gender) {
       return res.status(400).json({ message: "All fields are required!" });
     }
 
-    // Check if user already exists
     const existingUser = await User.findOne({ email });
     if (existingUser) {
       return res.status(400).json({ message: "Email already in use!" });
     }
 
-    // Check if passwords match
     if (password !== confirmPassword) {
       return res.status(400).json({ message: "Passwords do not match" });
     }
 
-    // Create new user
     const newUser = await User.create({ fullName, email, gender, password });
 
     res.status(201).json({
       message: "User registered successfully",
       token: generateToken(newUser._id),
-      userId: newUser._id,
-      fullName: newUser.fullName,
-      email: newUser.email,
-      gender: newUser.gender,
+      user: {
+        userId: newUser._id,
+        fullName: newUser.fullName,
+        email: newUser.email,
+        gender: newUser.gender,
+      },
     });
   } catch (error) {
     res.status(500).json({ message: "Server Error", error: error.message });
@@ -63,40 +61,55 @@ const loginUser = async (req, res) => {
     res.json({
       message: "Login successful",
       token: generateToken(user._id),
-      userId: user._id,
-      fullName: user.fullName,
-      email: user.email,
-      gender: user.gender,
+      user: {
+        userId: user._id,
+        fullName: user.fullName,
+        email: user.email,
+        gender: user.gender,
+      },
     });
   } catch (error) {
     res.status(500).json({ message: "Server Error", error: error.message });
   }
 };
 
-// ✅ Google OAuth Callback
+// ✅ Google OAuth Callback (Updated for frontend integration)
 const googleAuthCallback = async (req, res) => {
   try {
     if (!req.user) {
       return res.status(401).json({ message: "Google authentication failed" });
     }
 
-    // 🔹 Generate Token (if not already generated)
-    const token = req.user.token || generateJWT(req.user.user._id);
+    let user = req.user;
+    if (!user._id) {
+      // Create new user if not exists
+      user = await User.create({
+        fullName: `${
+          req.user.displayName || req.user.name.givenName || "Google User"
+        }`,
+        email: req.user.emails[0].value,
+        gender: "Other", // Default; enhance if Google provides gender
+        profilePic: req.user.photos?.[0]?.value || "",
+        password: crypto.randomBytes(16).toString("hex"), // Not used for Google login
+      });
+    }
 
-    // 🔹 Construct the frontend redirect URL with token & user data
-    const frontendRedirectURL = `${
-      process.env.FRONTEND_URL
-    }/login?token=${token}&userId=${
-      req.user.user._id
-    }&fullName=${encodeURIComponent(
-      req.user.user.fullName
-    )}&profilePic=${encodeURIComponent(
-      req.user.user.profilePic
-    )}&email=${encodeURIComponent(req.user.user.email)}`;
+    // Generate JWT token
+    const token = generateToken(user._id);
 
-    // 🔹 Redirect to frontend
-    res.redirect(frontendRedirectURL);
+    // Return JSON response for frontend
+    res.json({
+      message: "Google authentication successful",
+      token,
+      user: {
+        userId: user._id,
+        fullName: user.fullName,
+        email: user.email,
+        profilePic: user.profilePic || "",
+      },
+    });
   } catch (error) {
+    console.error("Google Auth Callback Error:", error);
     res.status(500).json({ message: "Server Error", error: error.message });
   }
 };
@@ -109,10 +122,8 @@ const forgotPassword = async (req, res) => {
       return res.status(400).json({ message: "Email is required" });
     }
 
-    // Normalize email (convert to lowercase & trim spaces)
     const normalizedEmail = email.trim().toLowerCase();
 
-    // Search for the user in a case-insensitive way
     const user = await User.findOne({
       email: { $regex: `^${normalizedEmail}$`, $options: "i" },
     });
@@ -121,13 +132,11 @@ const forgotPassword = async (req, res) => {
       return res.status(404).json({ message: "Email Not Registered!" });
     }
 
-    // Generate reset token (Example: JWT or UUID)
     const resetToken = crypto.randomBytes(32).toString("hex");
     user.resetPasswordToken = resetToken;
     user.resetPasswordExpires = Date.now() + 15 * 60 * 1000; // Expires in 15 mins
     await user.save();
 
-    // Send reset email (Replace with actual email sender function)
     await sendEmail({
       to: user.email,
       subject: "Password Reset Request",
@@ -160,17 +169,15 @@ const resetPassword = async (req, res) => {
       return res.status(400).json({ message: "Passwords do not match" });
     }
 
-    // 🔹 Find user by reset token and ensure token is not expired
     const user = await User.findOne({
       resetPasswordToken: token,
-      resetPasswordExpires: { $gt: Date.now() }, // Ensure token is valid
+      resetPasswordExpires: { $gt: Date.now() },
     });
 
     if (!user) {
       return res.status(400).json({ message: "Invalid or expired token" });
     }
 
-    // 🔹 Check if the new password is the same as the old one
     const isSamePassword = await bcrypt.compare(newPassword, user.password);
     if (isSamePassword) {
       return res.status(400).json({
@@ -178,17 +185,15 @@ const resetPassword = async (req, res) => {
       });
     }
 
-    // 🔹 Hash new password
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(newPassword, salt);
 
-    // 🔹 Update user's password in database
     await User.updateOne(
-      { _id: user._id }, // Find by user ID
+      { _id: user._id },
       {
         $set: {
-          password: hashedPassword, // Store new hashed password
-          resetPasswordToken: null, // Remove reset token
+          password: hashedPassword,
+          resetPasswordToken: null,
           resetPasswordExpires: null,
         },
       }

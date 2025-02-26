@@ -35,6 +35,7 @@ app.use(
       }
     },
     credentials: true, // Allow cookies and authentication
+    optionsSuccessStatus: 200, // Some browsers (e.g., IE) require this
   })
 );
 
@@ -59,6 +60,7 @@ app.use(
   cors({
     origin: allowedOrigins,
     credentials: true,
+    optionsSuccessStatus: 200,
   }),
   authRoutes
 );

@@ -83,6 +83,13 @@ const googleAuthCallback = async (req, res) => {
     let user = req.user.user; // Access the user object from the passport strategy
     const token = req.user.token; // Access the token generated in the strategy
 
+    // Set cookies for frontend persistence (optional, if frontend needs them)
+    res.cookie("userToken", token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "strict",
+    });
+
     // Return JSON response for frontend
     res.json({
       message: "Google authentication successful",

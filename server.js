@@ -35,6 +35,14 @@ app.use(
       }
     },
     credentials: true, // Allow cookies and authentication
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"], // Allow all HTTP methods
+    allowedHeaders: [
+      "Origin",
+      "X-Requested-With",
+      "Content-Type",
+      "Accept",
+      "Authorization",
+    ], // Allow common headers
     optionsSuccessStatus: 200, // Some browsers (e.g., IE) require this
   })
 );
@@ -55,11 +63,20 @@ app.use(
 app.use("/api", dashboardRoutes);
 app.use("/api/profile", profileRoutes);
 app.use(passport.initialize());
+// Apply CORS specifically to /api/auth routes
 app.use(
   "/api/auth",
   cors({
     origin: allowedOrigins,
     credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    allowedHeaders: [
+      "Origin",
+      "X-Requested-With",
+      "Content-Type",
+      "Accept",
+      "Authorization",
+    ],
     optionsSuccessStatus: 200,
   }),
   authRoutes
@@ -68,10 +85,34 @@ app.use("/api/expenses", expenseRoutes);
 app.use("/api/transactions", transactionRoutes);
 app.use("/api/groups", groupRoutes);
 
+// Handle preflight requests
+app.options(
+  "*",
+  cors({
+    origin: allowedOrigins,
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    allowedHeaders: [
+      "Origin",
+      "X-Requested-With",
+      "Content-Type",
+      "Accept",
+      "Authorization",
+    ],
+    optionsSuccessStatus: 200,
+  })
+);
+
 // Global Error Handling Middleware
 app.use((err, req, res, next) => {
   console.error("Server Error:", err.message);
   res.status(500).json({ error: "Server Error", details: err.message });
+});
+
+app.use((req, res, next) => {
+  res.setHeader("Cross-Origin-Opener-Policy", "same-origin-allow-popups");
+  res.setHeader("Cross-Origin-Embedder-Policy", "unsafe-none");
+  next();
 });
 
 // 🚀 **Only start the server when NOT running Jest tests**

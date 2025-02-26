@@ -20,11 +20,21 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+const allowedOrigins = [
+  "http://localhost:3000",
+  "https://split-ease-v1-tirth.vercel.app",
+];
+
 app.use(
   cors({
-    origin: process.env.FRONTEND_URL, // ✅ Allow frontend
-    methods: "GET,POST,PUT,DELETE, PATCH",
-    credentials: true,
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
+    credentials: true, // Allow cookies and authentication
   })
 );
 
@@ -44,7 +54,14 @@ app.use(
 app.use("/api", dashboardRoutes);
 app.use("/api/profile", profileRoutes);
 app.use(passport.initialize());
-app.use("/api/auth", authRoutes);
+app.use(
+  "/api/auth",
+  cors({
+    origin: allowedOrigins,
+    credentials: true,
+  }),
+  authRoutes
+);
 app.use("/api/expenses", expenseRoutes);
 app.use("/api/transactions", transactionRoutes);
 app.use("/api/groups", groupRoutes);

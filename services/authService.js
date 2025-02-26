@@ -80,22 +80,8 @@ const googleAuthCallback = async (req, res) => {
       return res.status(401).json({ message: "Google authentication failed" });
     }
 
-    let user = req.user;
-    if (!user._id) {
-      // Create new user if not exists
-      user = await User.create({
-        fullName: `${
-          req.user.displayName || req.user.name.givenName || "Google User"
-        }`,
-        email: req.user.emails[0].value,
-        gender: "Other", // Default; enhance if Google provides gender
-        profilePic: req.user.photos?.[0]?.value || "",
-        password: crypto.randomBytes(16).toString("hex"), // Not used for Google login
-      });
-    }
-
-    // Generate JWT token
-    const token = generateToken(user._id);
+    let user = req.user.user; // Access the user object from the passport strategy
+    const token = req.user.token; // Access the token generated in the strategy
 
     // Return JSON response for frontend
     res.json({

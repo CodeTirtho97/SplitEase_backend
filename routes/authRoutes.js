@@ -29,6 +29,11 @@ router.get(
 // ✅ Google OAuth Callback (For Both Signup & Login)
 router.get(
   "/google/callback",
+  cors({
+    origin: ["http://localhost:3000", "https://split-ease-v1-tirth.vercel.app"],
+    credentials: true,
+    optionsSuccessStatus: 200,
+  }),
   passport.authenticate("google", { session: false }),
   googleAuthCallback
 );

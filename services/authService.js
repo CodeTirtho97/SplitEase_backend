@@ -80,34 +80,43 @@ const googleAuthCallback = async (req, res) => {
       return res.status(401).json({ message: "Google authentication failed" });
     }
 
-    let user = req.user.user; // Access the user object from the passport strategy
-    const token = req.user.token; // Access the token generated in the strategy
+    const user = req.user.user;
+    const token = req.user.token;
 
-    // Set cookies for frontend persistence (optional, if frontend needs them)
-    res.cookie("userToken", token, {
-      httpOnly: true,
-      secure: true,
-      sameSite: "none", // Change to none for cross-site requests
-      // domain:
-      //   process.env.NODE_ENV === "production"
-      //     ? ".splitease-backend-z1pc.onrender.com"
-      //     : "localhost",
+    // Define the frontend URL based on environment
+    const frontendUrl =
+      process.env.NODE_ENV === "production"
+        ? "https://split-ease-v1-tirth.vercel.app"
+        : "http://localhost:3000";
+
+    // Redirect to the frontend callback page with user and token as query parameters
+    // This is more secure than putting them directly in the URL
+    const redirectUrl = `${frontendUrl}/auth/google/callback`;
+
+    // Set cookies that the frontend can access
+    res.cookie("googleAuthToken", token, {
+      httpOnly: false, // Frontend needs to access this
+      secure: process.env.NODE_ENV === "production",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      maxAge: 60 * 1000, // Short-lived cookie, just for the redirect process
     });
 
-    // Return JSON response for frontend
-    res.json({
-      message: "Google authentication successful",
-      token,
-      user: {
-        userId: user._id,
-        fullName: user.fullName,
-        email: user.email,
-        profilePic: user.profilePic || "",
-      },
+    res.cookie("googleAuthUser", JSON.stringify(user), {
+      httpOnly: false, // Frontend needs to access this
+      secure: process.env.NODE_ENV === "production",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      maxAge: 60 * 1000, // Short-lived cookie, just for the redirect process
     });
+
+    // Redirect to frontend callback page
+    return res.redirect(redirectUrl);
   } catch (error) {
     console.error("Google Auth Callback Error:", error);
-    res.status(500).json({ message: "Server Error", error: error.message });
+    const frontendUrl =
+      process.env.NODE_ENV === "production"
+        ? "https://split-ease-v1-tirth.vercel.app"
+        : "http://localhost:3000";
+    return res.redirect(`${frontendUrl}/login?error=auth_failed`);
   }
 };
 

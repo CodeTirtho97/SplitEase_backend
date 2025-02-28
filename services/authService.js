@@ -86,12 +86,12 @@ const googleAuthCallback = async (req, res) => {
     // Set cookies for frontend persistence (optional, if frontend needs them)
     res.cookie("userToken", token, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
+      secure: true,
       sameSite: "none", // Change to none for cross-site requests
-      domain:
-        process.env.NODE_ENV === "production"
-          ? ".splitease-backend-z1pc.onrender.com"
-          : "localhost",
+      // domain:
+      //   process.env.NODE_ENV === "production"
+      //     ? ".splitease-backend-z1pc.onrender.com"
+      //     : "localhost",
     });
 
     // Return JSON response for frontend

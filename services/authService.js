@@ -80,6 +80,8 @@ const googleAuthCallback = async (req, res) => {
       return res.status(401).json({ message: "Google authentication failed" });
     }
 
+    console.log("Google auth successful, user data:", req.user); // Add debug logging
+
     const user = req.user.user;
     const token = req.user.token;
 
@@ -89,27 +91,18 @@ const googleAuthCallback = async (req, res) => {
         ? "https://split-ease-v1-tirth.vercel.app"
         : "http://localhost:3000";
 
-    // Redirect to the frontend callback page with user and token as query parameters
-    // This is more secure than putting them directly in the URL
-    const redirectUrl = `${frontendUrl}/auth/google/callback`;
+    // BASE64 ENCODE THE USER DATA
+    const encodedUser = Buffer.from(JSON.stringify(user)).toString("base64");
 
-    // Set cookies that the frontend can access
-    res.cookie("googleAuthToken", token, {
-      httpOnly: false, // Frontend needs to access this
-      secure: process.env.NODE_ENV === "production",
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-      maxAge: 60 * 1000, // Short-lived cookie, just for the redirect process
-    });
+    // Log the redirect URL for debugging
+    console.log(
+      `Redirecting to: ${frontendUrl}/auth/google/callback?token=${token}&userData=${encodedUser}`
+    );
 
-    res.cookie("googleAuthUser", JSON.stringify(user), {
-      httpOnly: false, // Frontend needs to access this
-      secure: process.env.NODE_ENV === "production",
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-      maxAge: 60 * 1000, // Short-lived cookie, just for the redirect process
-    });
-
-    // Redirect to frontend callback page
-    return res.redirect(redirectUrl);
+    // Redirect with data in URL parameters
+    return res.redirect(
+      `${frontendUrl}/auth/google/callback?token=${token}&userData=${encodedUser}`
+    );
   } catch (error) {
     console.error("Google Auth Callback Error:", error);
     const frontendUrl =

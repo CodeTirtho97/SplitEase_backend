@@ -80,7 +80,7 @@ const googleAuthCallback = async (req, res) => {
       return res.status(401).json({ message: "Google authentication failed" });
     }
 
-    console.log("Google auth successful, user data:", req.user); // Add debug logging
+    //console.log("Google auth successful, user data:", req.user); // Add debug logging
 
     const user = req.user.user;
     const token = req.user.token;
@@ -95,9 +95,9 @@ const googleAuthCallback = async (req, res) => {
     const encodedUser = Buffer.from(JSON.stringify(user)).toString("base64");
 
     // Log the redirect URL for debugging
-    console.log(
-      `Redirecting to: ${frontendUrl}/auth/google/callback?token=${token}&userData=${encodedUser}`
-    );
+    // console.log(
+    //   `Redirecting to: ${frontendUrl}/auth/google/callback?token=${token}&userData=${encodedUser}`
+    // );
 
     // Redirect with data in URL parameters
     return res.redirect(

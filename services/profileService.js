@@ -160,6 +160,8 @@ const changePassword = async (req, res) => {
 const searchFriends = async (req, res) => {
   try {
     const { friendName } = req.body;
+
+    // Input validation
     if (!friendName || friendName.trim().length === 0) {
       return res.status(400).json({ message: "Friend name is required" });
     }
@@ -169,19 +171,32 @@ const searchFriends = async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
 
-    // ✅ Correct Friend Search Logic
+    // Improve search with more flexible regex
     const friends = await User.find({
-      fullName: { $regex: new RegExp(friendName, "i") }, // Case-insensitive regex
+      $or: [
+        { fullName: { $regex: new RegExp(friendName, "i") } }, // Case-insensitive name search
+        { email: { $regex: new RegExp(friendName, "i") } }, // Also search by email
+      ],
       _id: { $ne: req.user.id }, // Exclude self
-    }).select("_id fullName email");
+    }).select("_id fullName email profilePic");
+
+    // Better logging to diagnose issues
+    console.log(
+      `Friend search for "${friendName}" found ${friends.length} results`
+    );
 
     if (friends.length === 0) {
       return res.status(404).json({ message: "No users found with this name" });
     }
 
-    // ✅ Exclude already added friends
+    // Filter out already added friends
+    const userFriendIds = user.friends.map((id) => id.toString());
     const availableFriends = friends.filter(
-      (friend) => !user.friends.includes(friend._id.toString())
+      (friend) => !userFriendIds.includes(friend._id.toString())
+    );
+
+    console.log(
+      `After filtering existing friends, ${availableFriends.length} results remain`
     );
 
     if (availableFriends.length === 0) {
@@ -194,7 +209,7 @@ const searchFriends = async (req, res) => {
       .status(200)
       .json({ message: "Matching friends found", friends: availableFriends });
   } catch (error) {
-    //console.error("Friend Search Error:", error);
+    console.error("Friend Search Error:", error);
     res.status(500).json({ message: "Server Error", error: error.message });
   }
 };
@@ -257,7 +272,7 @@ const addPaymentMethod = async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
 
-    // 🔹 Check for duplicate payment method
+    // Check for duplicate payment method
     const existingPayment = user.paymentMethods.find(
       (payment) =>
         payment.methodType === methodType &&
@@ -274,12 +289,22 @@ const addPaymentMethod = async (req, res) => {
     user.paymentMethods.push({ methodType, accountDetails });
     await user.save();
 
-    res.status(200).json({
-      message: "Payment method added successfully",
+    // Return the complete user object to ensure the frontend has the latest data
+    // This helps prevent issues where the frontend loses user data after updates
+    const userResponse = {
+      _id: user._id,
+      fullName: user.fullName,
+      email: user.email,
+      gender: user.gender || "Other",
+      googleId: user.googleId,
+      profilePic: user.profilePic || "",
+      friends: user.friends,
       paymentMethods: user.paymentMethods,
-    });
+    };
+
+    res.status(200).json(userResponse);
   } catch (error) {
-    //console.error("Add Payment Method Error:", error);
+    console.error("Add Payment Method Error:", error);
     res.status(500).json({ message: "Server Error", error: error.message });
   }
 };
@@ -303,20 +328,46 @@ const deleteFriend = async (req, res) => {
 
 const deletePayment = async (req, res) => {
   try {
-    const user = await User.findById(req.user.id);
-    if (!user) return res.status(404).json({ message: "User not found" });
+    const { paymentId } = req.params; // Get payment ID from URL params
 
-    // Remove payment method from the array
-    user.paymentMethods = user.paymentMethods.filter(
-      (payment) => payment._id.toString() !== req.params.paymentId
+    // Input validation
+    if (!paymentId) {
+      return res.status(400).json({ message: "Payment ID is required" });
+    }
+
+    // Log for debugging
+    console.log(`Attempting to delete payment with ID: ${paymentId}`);
+
+    // Find the user
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    // Check if payment exists
+    const paymentExists = user.paymentMethods.some(
+      (payment) => payment._id.toString() === paymentId
     );
+
+    if (!paymentExists) {
+      return res.status(404).json({ message: "Payment method not found" });
+    }
+
+    // Remove the payment using MongoDB's pull operator
+    user.paymentMethods = user.paymentMethods.filter(
+      (payment) => payment._id.toString() !== paymentId
+    );
+
     await user.save();
 
-    res.json({
+    console.log(`Successfully removed payment method ${paymentId}`);
+
+    res.status(200).json({
       message: "Payment method removed successfully",
       paymentMethods: user.paymentMethods,
     });
   } catch (error) {
+    console.error("Delete Payment Error:", error);
     res.status(500).json({ message: "Server Error", error: error.message });
   }
 };

@@ -82,17 +82,20 @@ const getUserProfile = async (req, res) => {
   try {
     const user = await User.findById(req.user.id)
       .select("-password")
-      .populate("friends", "fullName email");
+      .populate("friends", "fullName email profilePic"); // Make sure to include necessary fields
+
     if (!user) return res.status(404).json({ message: "User not found" });
+
+    // Log to verify population worked
+    console.log("Populated friends:", user.friends);
 
     res.json({
       fullName: user.fullName,
       email: user.email,
       gender: user.gender || "male",
       profilePic: user.profilePic || "",
-      friends: user.friends,
+      friends: user.friends, // This should now contain friend objects
       paymentMethods: user.paymentMethods,
-      //groups: user.groups, // Groups will be auto-updated
     });
   } catch (error) {
     res.status(500).json({ error: "Server Error", details: error.message });

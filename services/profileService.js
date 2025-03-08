@@ -94,8 +94,9 @@ const getUserProfile = async (req, res) => {
       email: user.email,
       gender: user.gender || "male",
       profilePic: user.profilePic || "",
-      friends: user.friends, // This should now contain friend objects
+      friends: user.friends,
       paymentMethods: user.paymentMethods,
+      googleId: user.googleId || null, // Explicitly include googleId, default to null if not present
     });
   } catch (error) {
     res.status(500).json({ error: "Server Error", details: error.message });

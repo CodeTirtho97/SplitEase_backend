@@ -1,533 +1,435 @@
-// /services/groupService.js
+const mongoose = require("mongoose");
 const Group = require("../models/Group");
 const Expense = require("../models/Expense");
 const Transaction = require("../models/Transaction");
 const User = require("../models/User");
-const mongoose = require("mongoose");
-const {
-  NotFoundError,
-  BadRequestError,
-  UnauthorizedError,
-} = require("../utils/errors");
 
-// Create a new group
-exports.createGroup = async (groupData, userId) => {
+// ✅ Create a New Group with Full Validation
+const createGroup = async (req, res) => {
   try {
-    // Validate that at least one member is included
-    if (!groupData.members || groupData.members.length === 0) {
-      throw new BadRequestError("At least one member is required for a group");
+    const { name, description, type, members } = req.body;
+
+    // ✅ Validate Required Fields
+    if (!name || !members || members.length === 0) {
+      return res
+        .status(400)
+        .json({ message: "Group name and at least one member are required." });
     }
 
-    // Create a new group
-    const group = new Group({
-      ...groupData,
-      members: [...new Set([...groupData.members, userId])], // Ensure creator is included as a member
-      createdBy: userId,
-      lastActivity: Date.now(),
-    });
-
-    await group.save();
-
-    // Populate user data for response
-    await group.populate([
-      { path: "members", select: "fullName email avatar" },
-      { path: "createdBy", select: "fullName email avatar" },
-    ]);
-
-    return group;
-  } catch (error) {
-    if (error instanceof mongoose.Error.ValidationError) {
-      throw new BadRequestError(error.message);
-    }
-    throw error;
-  }
-};
-
-// Get all groups for a user
-exports.getAllGroups = async (userId) => {
-  try {
-    // Find groups where the user is a member and not archived
-    const groups = await Group.find({
-      members: userId,
-      isArchived: false,
-    })
-      .sort({ lastActivity: -1 })
-      .populate("members", "fullName email avatar")
-      .populate("createdBy", "fullName email avatar");
-
-    // For each group, get expenses count and total
-    for (const group of groups) {
-      const expensesAggregation = await Expense.aggregate([
-        { $match: { group: group._id } },
-        {
-          $group: {
-            _id: null,
-            count: { $sum: 1 },
-            total: { $sum: "$amount" },
-          },
-        },
-      ]);
-
-      // If expenses exist, set the virtual properties
-      if (expensesAggregation.length > 0) {
-        group.expensesCount = expensesAggregation[0].count;
-        group.totalExpenses = expensesAggregation[0].total;
-      } else {
-        group.expensesCount = 0;
-        group.totalExpenses = 0;
-      }
-
-      // Get pending amount calculation
-      const pendingAmount = await this.calculatePendingAmount(group._id);
-      group.pendingAmount = pendingAmount;
+    if (name.length > 30) {
+      return res
+        .status(400)
+        .json({ message: "Group name must be at most 30 characters long." });
     }
 
-    return groups;
-  } catch (error) {
-    throw error;
-  }
-};
-
-// Get a specific group by ID
-exports.getGroupById = async (groupId, userId) => {
-  try {
-    const group = await Group.findById(groupId)
-      .populate("members", "fullName email avatar")
-      .populate("createdBy", "fullName email avatar")
-      .populate("settledMembers", "fullName email avatar");
-
-    if (!group) {
-      throw new NotFoundError("Group not found");
+    if (description && description.length > 100) {
+      return res.status(400).json({
+        message: "Group description must be at most 100 characters long.",
+      });
     }
 
-    // Verify the user is a member of the group
-    if (!group.members.some((member) => member._id.toString() === userId)) {
-      throw new UnauthorizedError("You are not a member of this group");
+    const creatorId = new mongoose.Types.ObjectId(req.user.id);
+
+    // ✅ Fetch the creator's details
+    const creator = await User.findById(creatorId);
+    if (!creator) {
+      return res.status(404).json({ message: "User not found." });
     }
 
-    // Get expenses count and total
-    const expensesAggregation = await Expense.aggregate([
-      { $match: { group: mongoose.Types.ObjectId(groupId) } },
-      {
-        $group: {
-          _id: null,
-          count: { $sum: 1 },
-          total: { $sum: "$amount" },
-        },
-      },
-    ]);
-
-    // Set virtual properties
-    if (expensesAggregation.length > 0) {
-      group.expensesCount = expensesAggregation[0].count;
-      group.totalExpenses = expensesAggregation[0].total;
-    } else {
-      group.expensesCount = 0;
-      group.totalExpenses = 0;
+    // ✅ Validate `type` field
+    const validTypes = ["Travel", "Household", "Event", "Work", "Friends"];
+    if (!validTypes.includes(type)) {
+      return res.status(400).json({ message: "Invalid group type." });
     }
 
-    // Calculate pending amount
-    group.pendingAmount = await this.calculatePendingAmount(groupId);
+    // ✅ Get creator's friends list
+    const friendsList = creator.friends.map((id) => id.toString());
 
-    // Update lastActivity timestamp
-    await Group.findByIdAndUpdate(groupId, { lastActivity: Date.now() });
+    // ✅ Convert members to ObjectId and ensure creator is included
+    let membersObjectIds = members.map((id) => new mongoose.Types.ObjectId(id));
 
-    return group;
-  } catch (error) {
-    throw error;
-  }
-};
-
-// Update a group
-exports.updateGroup = async (groupId, updateData, userId) => {
-  try {
-    const group = await Group.findById(groupId);
-
-    if (!group) {
-      throw new NotFoundError("Group not found");
-    }
-
-    // Verify the user is the creator of the group
-    if (group.createdBy.toString() !== userId) {
-      throw new UnauthorizedError(
-        "Only the group creator can update the group"
-      );
-    }
-
-    // Make sure creator remains a member
-    if (updateData.members && Array.isArray(updateData.members)) {
-      if (!updateData.members.includes(userId.toString())) {
-        updateData.members.push(userId);
+    // ✅ Ensure all members are in the creator's friends list
+    for (const member of members) {
+      if (!friendsList.includes(member)) {
+        return res.status(400).json({
+          message: `User with ID ${member} is not in your friends list.`,
+        });
       }
     }
 
-    // Update the group and set lastActivity timestamp
-    updateData.lastActivity = Date.now();
-
-    const updatedGroup = await Group.findByIdAndUpdate(groupId, updateData, {
-      new: true,
-      runValidators: true,
-    })
-      .populate("members", "fullName email avatar")
-      .populate("createdBy", "fullName email avatar");
-
-    return updatedGroup;
-  } catch (error) {
-    if (error instanceof mongoose.Error.ValidationError) {
-      throw new BadRequestError(error.message);
-    }
-    throw error;
-  }
-};
-
-// Delete a group
-exports.deleteGroup = async (groupId, userId) => {
-  try {
-    const group = await Group.findById(groupId);
-
-    if (!group) {
-      throw new NotFoundError("Group not found");
+    // ✅ Ensure creator is in the group
+    if (!membersObjectIds.some((id) => id.equals(creatorId))) {
+      membersObjectIds.push(creatorId);
     }
 
-    // Verify the user is the creator of the group
-    if (group.createdBy.toString() !== userId) {
-      throw new UnauthorizedError(
-        "Only the group creator can delete the group"
-      );
+    // ✅ Validate Members Exist in Database
+    const existingUsers = await User.find({ _id: { $in: membersObjectIds } });
+    if (existingUsers.length !== membersObjectIds.length) {
+      return res
+        .status(400)
+        .json({ message: "One or more members do not exist." });
     }
 
-    // Check if there are any unresolved expenses
-    const pendingExpenses = await Expense.countDocuments({
-      group: groupId,
-      isSettled: false,
+    // ✅ Prevent Duplicate Group with Same Name & Members
+    const existingGroup = await Group.findOne({
+      name: { $regex: new RegExp(`^${name}$`, "i") },
+      members: { $all: membersObjectIds, $size: membersObjectIds.length },
     });
 
-    if (pendingExpenses > 0) {
-      throw new BadRequestError("Cannot delete group with unresolved expenses");
+    if (existingGroup) {
+      return res.status(400).json({
+        message: "A group with the same name and members already exists.",
+      });
     }
 
-    // Delete related expenses
-    await Expense.deleteMany({ group: groupId });
+    // ✅ Create the Group
+    const newGroup = await Group.create({
+      name,
+      description: description || "",
+      type,
+      createdBy: creatorId,
+      members: membersObjectIds,
+      completed: false, // Default status as active
+      createdAt: Date.now(),
+    });
 
-    // Delete related transactions
-    await Transaction.deleteMany({ group: groupId });
+    // ✅ Populate Created Group Response
+    const populatedGroup = await Group.findById(newGroup._id)
+      .populate("createdBy", "name email")
+      .populate("members", "name email gender");
 
-    // Delete the group
-    await Group.findByIdAndDelete(groupId);
-
-    return { message: "Group and related data deleted successfully" };
+    res
+      .status(201)
+      .json({ message: "Group created successfully", group: populatedGroup });
   } catch (error) {
-    throw error;
+    console.error("Error creating group:", error);
+    res.status(500).json({ message: "Server Error", error: error.message });
   }
 };
 
-// Archive a group (soft delete)
-exports.archiveGroup = async (groupId, userId) => {
+const getUserGroups = async (req, res) => {
   try {
-    const group = await Group.findById(groupId);
+    const userId = new mongoose.Types.ObjectId(req.user.id); // Ensure userId is an ObjectId
 
-    if (!group) {
-      throw new NotFoundError("Group not found");
-    }
+    // Fetch all groups where the user is a member
+    const groups = await Group.aggregate([
+      { $match: { members: userId } }, // Match groups where user is a member
 
-    // Verify the user is the creator of the group
-    if (group.createdBy.toString() !== userId) {
-      throw new UnauthorizedError(
-        "Only the group creator can archive the group"
-      );
-    }
-
-    // Mark the group as archived
-    const archivedGroup = await Group.findByIdAndUpdate(
-      groupId,
-      { isArchived: true },
-      { new: true }
-    )
-      .populate("members", "fullName email avatar")
-      .populate("createdBy", "fullName email avatar");
-
-    return archivedGroup;
-  } catch (error) {
-    throw error;
-  }
-};
-
-// Toggle group favorite status
-exports.toggleFavorite = async (groupId, userId) => {
-  try {
-    const group = await Group.findById(groupId);
-
-    if (!group) {
-      throw new NotFoundError("Group not found");
-    }
-
-    // Verify the user is a member of the group
-    if (!group.members.includes(userId)) {
-      throw new UnauthorizedError("You are not a member of this group");
-    }
-
-    // Toggle the favorite status
-    const updatedGroup = await Group.findByIdAndUpdate(
-      groupId,
-      { isFavorite: !group.isFavorite },
-      { new: true }
-    )
-      .populate("members", "fullName email avatar")
-      .populate("createdBy", "fullName email avatar");
-
-    return updatedGroup;
-  } catch (error) {
-    throw error;
-  }
-};
-
-// Get multiple groups by IDs
-exports.getGroupsByIds = async (groupIds, userId) => {
-  try {
-    if (!Array.isArray(groupIds) || groupIds.length === 0) {
-      throw new BadRequestError("Valid group IDs array is required");
-    }
-
-    const groups = await Group.find({
-      _id: { $in: groupIds },
-      members: userId,
-      isArchived: false,
-    })
-      .populate("members", "fullName email avatar")
-      .populate("createdBy", "fullName email avatar");
-
-    return groups;
-  } catch (error) {
-    throw error;
-  }
-};
-
-// Get group statistics
-exports.getGroupStats = async (groupId, userId) => {
-  try {
-    const group = await Group.findById(groupId);
-
-    if (!group) {
-      throw new NotFoundError("Group not found");
-    }
-
-    // Verify the user is a member of the group
-    if (!group.members.includes(userId)) {
-      throw new UnauthorizedError("You are not a member of this group");
-    }
-
-    // Get total expenses in the group
-    const expensesAggregation = await Expense.aggregate([
-      { $match: { group: mongoose.Types.ObjectId(groupId) } },
-      {
-        $group: {
-          _id: null,
-          totalAmount: { $sum: "$amount" },
-          count: { $sum: 1 },
-        },
-      },
-    ]);
-
-    // Get settled and pending amounts
-    const settledExpenses = await Expense.aggregate([
-      {
-        $match: {
-          group: mongoose.Types.ObjectId(groupId),
-          isSettled: true,
-        },
-      },
-      {
-        $group: {
-          _id: null,
-          settledAmount: { $sum: "$amount" },
-        },
-      },
-    ]);
-
-    // Get member contributions
-    const memberContributions = await Expense.aggregate([
-      { $match: { group: mongoose.Types.ObjectId(groupId) } },
-      {
-        $group: {
-          _id: "$paidBy",
-          amount: { $sum: "$amount" },
-        },
-      },
+      // Lookup creator details
       {
         $lookup: {
           from: "users",
-          localField: "_id",
+          localField: "createdBy",
           foreignField: "_id",
-          as: "userDetails",
+          as: "creator",
         },
       },
+
+      // Lookup member details
+      {
+        $lookup: {
+          from: "users",
+          localField: "members",
+          foreignField: "_id",
+          as: "memberDetails",
+        },
+      },
+
+      // Lookup expenses linked to this group
+      {
+        $lookup: {
+          from: "expenses",
+          localField: "_id",
+          foreignField: "groupId",
+          as: "expenses",
+        },
+      },
+
+      // Lookup transactions linked to this group via expenses
+      {
+        $lookup: {
+          from: "transactions",
+          localField: "expenses._id",
+          foreignField: "expenseId",
+          as: "transactions",
+        },
+      },
+
+      // Project required fields & calculate total expenses & transactions
       {
         $project: {
-          memberId: "$_id",
-          memberName: { $arrayElemAt: ["$userDetails.fullName", 0] },
-          amount: 1,
+          name: 1,
+          description: 1,
+          type: 1,
+          completed: 1,
+          createdAt: 1,
+          expenseCount: { $size: "$expenses" },
+          transactionCount: { $size: "$transactions" },
+          totalSpent: {
+            $sum: {
+              $map: {
+                input: "$expenses",
+                as: "expense",
+                in: "$$expense.totalAmount",
+              },
+            },
+          },
+
+          // Extract first element from creator array & replace `createdBy`
+          createdBy: { $arrayElemAt: ["$creator", 0] },
+
+          // Send `members` as full user objects instead of ObjectIds
+          members: "$memberDetails",
         },
       },
     ]);
 
-    // Calculate total amount and percentage for each member
-    const totalAmount =
-      expensesAggregation.length > 0 ? expensesAggregation[0].totalAmount : 0;
+    // Separate active and completed groups
+    const totalGroups = groups.length;
+    const activeGroups = groups.filter((group) => !group.completed).length;
+    const completedGroups = groups.filter((group) => group.completed).length;
 
-    const memberStats = memberContributions.map((member) => ({
-      memberId: member.memberId,
-      memberName: member.memberName,
-      amount: member.amount,
-      percentage:
-        totalAmount > 0 ? ((member.amount / totalAmount) * 100).toFixed(2) : 0,
-    }));
-
-    return {
-      totalExpenses:
-        expensesAggregation.length > 0 ? expensesAggregation[0].count : 0,
-      totalAmount: totalAmount,
-      settledAmount:
-        settledExpenses.length > 0 ? settledExpenses[0].settledAmount : 0,
-      pendingAmount:
-        totalAmount -
-        (settledExpenses.length > 0 ? settledExpenses[0].settledAmount : 0),
-      memberContributions: memberStats,
-    };
+    res.status(200).json({
+      message: "Groups fetched successfully",
+      totalGroups,
+      activeGroups,
+      completedGroups,
+      groups,
+    });
   } catch (error) {
-    throw error;
+    console.error("Error fetching user groups:", error);
+    res.status(500).json({ message: "Server Error", error: error.message });
   }
 };
 
-// Get group transactions
-exports.getGroupTransactions = async (groupId, userId) => {
+// ✅ View Group Details (Group Details, Member Info, Recent 5 Transactions, Top 5 Pending Transactions)
+const viewGroupDetails = async (req, res) => {
   try {
-    const group = await Group.findById(groupId);
+    const { groupId } = req.params;
+
+    // 🔹 Fetch group details and populate references
+    const group = await Group.findById(groupId)
+      .populate("createdBy", "fullName email") // Use "fullName" for consistency
+      .populate("members", "fullName email gender");
 
     if (!group) {
-      throw new NotFoundError("Group not found");
+      return res.status(404).json({ message: "Group not found." });
     }
 
-    // Verify the user is a member of the group
-    if (!group.members.includes(userId)) {
-      throw new UnauthorizedError("You are not a member of this group");
+    console.log("✅ Backend: Group Creator:", group.createdBy);
+
+    // 🔹 Fetch expenses linked to this group
+    const expenses = await Expense.find({ groupId })
+      .populate("payer", "fullName email")
+      .populate("participants", "fullName email");
+
+    // ✅ Ensure expenses array exists
+    if (!expenses || expenses.length === 0) {
+      console.warn(`⚠️ No expenses found for group ${groupId}`);
     }
 
-    // Get all transactions for the group
-    const transactions = await Transaction.find({ group: groupId })
-      .populate("sender", "fullName email avatar")
-      .populate("receiver", "fullName email avatar")
-      .sort({ createdAt: -1 });
-
-    // Separate completed and pending transactions
-    const completed = transactions.filter((txn) => txn.status === "completed");
-    const pending = transactions.filter((txn) => txn.status === "pending");
-
-    return { completed, pending };
-  } catch (error) {
-    throw error;
-  }
-};
-
-// Calculate who owes whom
-exports.calculateOwes = async (groupId, userId) => {
-  try {
-    const group = await Group.findById(groupId);
-
-    if (!group) {
-      throw new NotFoundError("Group not found");
-    }
-
-    // Verify the user is a member of the group
-    if (!group.members.includes(userId)) {
-      throw new UnauthorizedError("You are not a member of this group");
-    }
-
-    // Get all expenses in the group
-    const expenses = await Expense.find({
-      group: groupId,
-      isSettled: false,
+    // 🔹 Fetch recent completed transactions (limit 5)
+    const completedTransactions = await Transaction.find({
+      expenseId: { $in: expenses.map((e) => e._id) },
+      status: "Completed", // Ensure this matches your Transaction model status
     })
-      .populate("paidBy", "fullName")
-      .populate("splitAmong", "fullName");
+      .sort({ createdAt: -1 })
+      .limit(5)
+      .populate("sender", "fullName")
+      .populate("receiver", "fullName");
 
-    // Calculate balances
-    const balances = new Map();
+    // 🔹 Fetch pending transactions, sorted by highest amount
+    const pendingTransactions = await Transaction.find({
+      expenseId: { $in: expenses.map((e) => e._id) },
+      status: "Pending",
+    })
+      .sort({ amount: -1 })
+      .limit(5)
+      .populate("sender", "fullName")
+      .populate("receiver", "fullName");
 
-    // Process each expense
-    for (const expense of expenses) {
-      const payer = expense.paidBy.fullName;
-      const splitAmount = expense.amount / expense.splitAmong.length;
+    // ✅ Debug: Log transaction statuses to verify
+    console.log("Completed Transactions:", completedTransactions);
+    console.log("Pending Transactions:", pendingTransactions);
 
-      // For each person the expense is split among
-      for (const person of expense.splitAmong) {
-        const participant = person.fullName;
+    // ✅ Ensure transactions arrays exist
+    const safeCompletedTransactions = Array.isArray(completedTransactions)
+      ? completedTransactions
+      : [];
+    const safePendingTransactions = Array.isArray(pendingTransactions)
+      ? pendingTransactions
+      : [];
 
-        // Skip if payer and participant are the same
-        if (payer === participant) continue;
+    res.status(200).json({
+      message: "Group details fetched successfully",
+      group,
+      expenses,
+      completedTransactions: safeCompletedTransactions, // Recent completed transactions
+      pendingTransactions: safePendingTransactions, // Top pending transactions
+    });
+  } catch (error) {
+    console.error("❌ Error fetching group details:", error);
+    res.status(500).json({ message: "Server Error", error: error.message });
+  }
+};
 
-        // Initialize balances if needed
-        if (!balances.has(payer)) balances.set(payer, new Map());
-        if (!balances.has(participant)) balances.set(participant, new Map());
+// ✅ Edit an Existing Group (Update Description, Completed Status, or Members)
+const editGroup = async (req, res) => {
+  try {
+    const { groupId } = req.params;
+    const { description, completed, members } = req.body;
+    const userId = req.user.id;
 
-        // Update how much participant owes payer
-        const payerMap = balances.get(payer);
-        const participantMap = balances.get(participant);
+    console.log("🛠️ User ID from token:", userId);
+    console.log("🛠️ Group ID to edit:", groupId);
 
-        const currentOwed = payerMap.get(participant) || 0;
-        payerMap.set(participant, currentOwed + splitAmount);
-
-        // Update how much payer is owed by participant (negative direction)
-        const currentOwing = participantMap.get(payer) || 0;
-        participantMap.set(payer, currentOwing - splitAmount);
-      }
+    if (!mongoose.Types.ObjectId.isValid(groupId)) {
+      return res.status(400).json({ message: "Invalid group ID format" });
     }
 
-    // Simplify and convert to array format
-    const owes = [];
-    for (const [from, toMap] of balances.entries()) {
-      for (const [to, amount] of toMap.entries()) {
-        if (amount > 0) {
-          owes.push({
-            from,
-            to,
-            amount: parseFloat(amount.toFixed(2)),
+    // ✅ Fetch the Group without `.lean()`
+    const group = await Group.findById(groupId).populate(
+      "createdBy",
+      "_id fullName email"
+    );
+
+    if (!group) {
+      return res.status(404).json({ message: "Group not found." });
+    }
+
+    console.log("🛠️ Raw Group Creator:", group.createdBy);
+
+    // ✅ Fix Permission Check
+    if (group.createdBy._id.toString() !== userId.toString()) {
+      return res.status(403).json({
+        message: `Unauthorized: Only the creator can edit this group. [Creator ID: ${group.createdBy._id}, Requesting User ID: ${userId}]`,
+      });
+    }
+
+    // ✅ Validate Members List
+    if (members && Array.isArray(members)) {
+      const creator = await User.findById(userId);
+      if (!creator) {
+        return res.status(404).json({ message: "User not found." });
+      }
+
+      const friendsList = creator.friends.map((id) => id.toString());
+
+      for (const member of members) {
+        const memberId = typeof member === "object" ? member._id : member;
+        if (memberId.toString() === userId.toString()) continue; // ✅ Skip creator
+
+        if (!friendsList.includes(memberId.toString())) {
+          return res.status(400).json({
+            message: `User with ID ${memberId} is not in your friends list.`,
           });
         }
       }
     }
 
-    return owes;
+    // ✅ Perform the update properly
+    const updatedGroup = await Group.findByIdAndUpdate(
+      groupId,
+      { $set: { description, completed, members } }, // ✅ Update fields only if provided
+      { new: true }
+    );
+
+    res.status(200).json({
+      message: "Group updated successfully",
+      updatedGroup,
+    });
   } catch (error) {
-    throw error;
+    console.error("❌ Error editing group:", error);
+    res.status(500).json({ message: "Server Error", error: error.message });
   }
 };
 
-// Helper method to calculate pending amount for a group
-exports.calculatePendingAmount = async (groupId) => {
+// ✅ Delete a Group (Only the Creator Can Delete)
+const deleteGroup = async (req, res) => {
   try {
-    // Get total expenses amount
-    const totalExpenses = await Expense.aggregate([
-      { $match: { group: mongoose.Types.ObjectId(groupId) } },
-      { $group: { _id: null, total: { $sum: "$amount" } } },
-    ]);
+    const { groupId } = req.params;
+    const userId = req.user.id;
 
-    // Get settled expenses amount
-    const settledExpenses = await Expense.aggregate([
-      {
-        $match: {
-          group: mongoose.Types.ObjectId(groupId),
-          isSettled: true,
-        },
-      },
-      { $group: { _id: null, total: { $sum: "$amount" } } },
-    ]);
+    if (!mongoose.Types.ObjectId.isValid(groupId)) {
+      return res.status(400).json({ message: "Invalid group ID format" });
+    }
 
-    const totalAmount = totalExpenses.length > 0 ? totalExpenses[0].total : 0;
-    const settledAmount =
-      settledExpenses.length > 0 ? settledExpenses[0].total : 0;
+    const group = await Group.findById(groupId);
+    if (!group) {
+      return res.status(404).json({ message: "Group not found." });
+    }
 
-    return totalAmount - settledAmount;
+    // ✅ Ensure only the creator can delete
+    if (group.createdBy.toString() !== userId) {
+      return res.status(403).json({
+        message: "Unauthorized: Only the creator can delete this group.",
+      });
+    }
+
+    // ✅ Find all expenses related to this group
+    const expenses = await Expense.find({ groupId });
+
+    // ✅ Delete all transactions linked to these expenses
+    await Transaction.deleteMany({
+      expenseId: { $in: expenses.map((e) => e._id) },
+    });
+
+    // ✅ Delete all expenses for this group
+    await Expense.deleteMany({ groupId });
+
+    // ✅ Remove group from each member's list
+    await User.updateMany(
+      { _id: { $in: group.members } },
+      { $pull: { groups: groupId } }
+    );
+
+    // ✅ Finally, delete the group
+    await Group.findByIdAndDelete(groupId);
+
+    res.status(200).json({ message: "Group deleted successfully." });
   } catch (error) {
-    throw error;
+    console.error("Error deleting group:", error);
+    res.status(500).json({ message: "Server Error", error: error.message });
   }
+};
+
+// ✅ Fetch User's Friends List (Within Group Service)
+const getUserFriends = async (req, res) => {
+  try {
+    //console.log("🔍 Incoming Request - User:", req.user);
+
+    if (!req.user || !req.user._id) {
+      console.error("❌ [Backend] User ID is missing!");
+      return res.status(400).json({ message: "Invalid user ID" });
+    }
+
+    const userId = req.user.id;
+    //console.log("🔍 [Backend] Fetching friends for user:", userId);
+
+    // ✅ Fetch user and populate friends
+    const user = await User.findById(userId).populate(
+      "friends",
+      "_id fullName email"
+    );
+
+    if (!user) {
+      //console.log("❌ [Backend] User not found!");
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    //console.log("✅ [Backend] Friends List:", user.friends);
+    res.status(200).json({ friends: user.friends || [] });
+  } catch (error) {
+    console.error("❌ [Backend] Error fetching friends:", error);
+    res.status(500).json({ message: "Server Error", error: error.message });
+  }
+};
+
+module.exports = {
+  createGroup,
+  getUserGroups,
+  viewGroupDetails,
+  editGroup,
+  deleteGroup,
+  getUserFriends,
 };

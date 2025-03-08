@@ -1,25 +1,33 @@
-// /routes/groupRoutes.js
 const express = require("express");
+const {
+  createGroup,
+  getUserGroups,
+  deleteGroup,
+  editGroup,
+  viewGroupDetails,
+  getUserFriends,
+} = require("../services/groupService");
+
+const protect = require("../middleware/authMiddleware");
+
 const router = express.Router();
-const groupController = require("../controllers/groupController");
-const authMiddleware = require("../middleware/auth");
 
-// Apply authentication middleware to all group routes
-router.use(authMiddleware);
+// ✅ Create a new group
+router.post("/create", protect, createGroup);
 
-// Group CRUD operations
-router.post("/", groupController.createGroup);
-router.get("/", groupController.getAllGroups);
-router.get("/:id", groupController.getGroupById);
-router.put("/:id", groupController.updateGroup);
-router.delete("/:id", groupController.deleteGroup);
+// ✅ Route: Fetch User's Friends (via Group Module)
+router.get("/friends", protect, getUserFriends);
 
-// Enhanced operations
-router.post("/batch", groupController.getGroupsByIds);
-router.put("/:id/archive", groupController.archiveGroup);
-router.put("/:id/favorite", groupController.toggleFavorite);
-router.get("/:id/stats", groupController.getGroupStats);
-router.get("/:id/transactions", groupController.getGroupTransactions);
-router.get("/:id/owes", groupController.calculateOwes);
+// ✅ Fetch all groups the user is part of
+router.get("/mygroups", protect, getUserGroups);
+
+// ✅ Fetch a single group's details (for View Group modal)
+router.get("/:groupId", protect, viewGroupDetails);
+
+// ✅ Edit an existing group (update description, completed status, or members)
+router.put("/edit/:groupId", protect, editGroup);
+
+// ✅ Delete a group (with confirmation)
+router.delete("/delete/:groupId", protect, deleteGroup);
 
 module.exports = router;

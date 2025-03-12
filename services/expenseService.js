@@ -592,33 +592,23 @@ const getExpenseSummary = async (req, res) => {
   }
 };
 
-// NEW: Returns the 5 most recent expenses with details, ensuring correct payer
+// Updated getRecentExpenses function to include expenses where user is payer or participant
 const getRecentExpenses = async (req, res) => {
   try {
     const userId = req.user.id;
-    //console.log("Logged-in user ID:", userId); // Log the logged-in user's ID
 
-    // Log raw expenses before population
-    const rawExpenses = await Expense.find({ participants: userId })
+    // Find all expenses where user is either a payer OR a participant
+    const expenses = await Expense.find({
+      $or: [
+        { participants: userId }, // User is a participant
+        { payer: userId }, // User is the payer
+      ],
+    })
       .sort({ createdAt: -1 })
-      .limit(5);
-    // console.log(
-    //   "Raw expenses before population:",
-    //   JSON.stringify(rawExpenses, null, 2)
-    // );
-
-    const expenses = await Expense.find({ participants: userId })
-      .sort({ createdAt: -1 })
-      .limit(5)
-      .populate("payer", "fullName email") // Populate payer details (must be the actual payer)
+      .limit(10) // Increased limit to show more relevant expenses
+      .populate("payer", "fullName email") // Populate payer details
       .populate("participants", "fullName email") // Populate participant details
       .populate("splitDetails.userId", "fullName email"); // Populate splitDetails userId with fullName and email
-
-    // Log populated expenses
-    // console.log(
-    //   "Populated expenses after population:",
-    //   JSON.stringify(expenses, null, 2)
-    // );
 
     // Transform the expenses to include full names in splitDetails and verify payer
     const transformedExpenses = expenses.map((expense) => {
@@ -626,20 +616,16 @@ const getRecentExpenses = async (req, res) => {
         ...detail.toObject(),
         user: detail.userId
           ? {
+              _id: detail.userId._id,
               fullName: detail.userId.fullName || "Unknown",
-              // Optionally include email if needed
+              email: detail.userId.email || "",
             }
           : { fullName: "Unknown" },
       }));
 
-      // Log the payer and split details for debugging
-      // console.log(
-      //   `Transforming expense ${expense._id}: Payer = ${expense.payer?.fullName}, SplitDetails =`,
-      //   JSON.stringify(transformedSplitDetails, null, 2)
-      // );
-
-      // Ensure payer.fullName is the actual payer, not influenced by req.user
+      // Ensure payer.fullName is the actual payer
       const payerFullName = expense.payer?.fullName || "Unknown";
+      const payerId = expense.payer?._id || "";
 
       return {
         ...expense.toObject(),
@@ -647,15 +633,10 @@ const getRecentExpenses = async (req, res) => {
         payer: {
           ...expense.payer?.toObject(),
           fullName: payerFullName,
+          _id: payerId,
         },
       };
     });
-
-    // Log transformed expenses before sending
-    // console.log(
-    //   "Transformed expenses before response:",
-    //   JSON.stringify(transformedExpenses, null, 2)
-    // );
 
     res.status(200).json({
       message: "Recent expenses fetched successfully",

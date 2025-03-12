@@ -388,7 +388,7 @@ const getExpenseSummary = async (req, res) => {
     const userGroups = await Group.find({ members: userId }).select("_id");
     const groupIds = userGroups.map((group) => group._id);
 
-    // Find all expenses where the user is a participant, payer, or the expense belongs to one of the user's groups
+    // Get all expenses involving the user (as payer or participant)
     const expenses = await Expense.find({
       $or: [
         { participants: userId }, // User is a participant
@@ -396,8 +396,20 @@ const getExpenseSummary = async (req, res) => {
         { groupId: { $in: groupIds } }, // Expense belongs to a group the user is in
       ],
     })
-      .populate("participants", "fullName") // Populate participant names for debugging
-      .populate("payer", "fullName"); // Populate payer details
+      .populate("participants", "fullName")
+      .populate("payer", "fullName")
+      .populate("splitDetails.userId", "fullName");
+
+    // Get all pending transactions to calculate net debts
+    const transactions = await Transaction.find({
+      $or: [
+        { sender: userId }, // User is the sender
+        { receiver: userId }, // User is the receiver
+      ],
+      status: "Pending", // Only consider pending transactions
+    })
+      .populate("sender", "fullName")
+      .populate("receiver", "fullName");
 
     if (!expenses || expenses.length === 0) {
       return res.status(200).json({
@@ -447,112 +459,97 @@ const getExpenseSummary = async (req, res) => {
       return amount * (rateTo / rateFrom);
     };
 
-    // Function to calculate user's share as payer based on split type
-    const calculatePayerShare = (expense, userId) => {
-      if (
-        !expense.splitType ||
-        !expense.amount ||
-        expense.payer?.toString() !== userId
-      ) {
-        return 0; // User isn’t the payer or no split type/amount
-      }
-
-      let userShare = 0;
-      const totalAmount = expense.amount;
-
-      switch (expense.splitType) {
-        case "Equal":
-          // If equal split, user (payer) pays 100% minus the sum of participant shares
-          const participantCount = expense.participants.length;
-          if (participantCount > 0) {
-            const sharePerParticipant = totalAmount / (participantCount + 1); // +1 for payer
-            userShare = totalAmount - sharePerParticipant * participantCount; // Payer’s share
-          } else {
-            userShare = totalAmount; // Payer takes full amount if no participants
-          }
-          break;
-
-        case "Percentage":
-          // Sum all percentage values from splitDetails for participants
-          const participantPercentages = expense.splitDetails
-            .filter((split) => split.userId && !split.userId.equals(userId))
-            .reduce((sum, split) => sum + (split.percentage || 0), 0);
-          userShare = totalAmount * (1 - participantPercentages / 100); // Payer’s percentage share
-          break;
-
-        case "Custom":
-          // Sum all custom amounts from splitDetails for participants
-          const participantCustomAmounts = expense.splitDetails
-            .filter((split) => split.userId && !split.userId.equals(userId))
-            .reduce((sum, split) => sum + (split.amountOwed || 0), 0);
-          userShare = totalAmount - participantCustomAmounts; // Payer’s remaining share
-          break;
-
-        default:
-          userShare = 0; // Default to 0 if split type is invalid
-      }
-
-      return userShare > 0 ? userShare : 0; // Ensure non-negative share
-    };
-
-    // Aggregate expenses, considering user-specific splits and transaction status (including payer logic)
+    // Calculate summary for each currency
     const convertedSummary = targetCurrencies.reduce((acc, currency) => {
-      let totalExpenses = 0,
-        totalPending = 0,
-        totalSettled = 0;
+      // 1. TOTAL EXPENSES: Sum of all expenses where user is involved
+      let totalExpenses = 0;
 
       expenses.forEach((expense) => {
-        // Calculate user's share as a participant (if any)
-        const userAsParticipant = expense.splitDetails.find((split) =>
-          split.userId?.equals(userId)
+        // Check if the user is involved in this expense
+        const isParticipant = expense.participants.some(
+          (p) => p._id.toString() === userId
         );
-        let userShare = 0;
+        const isPayer = expense.payer._id.toString() === userId;
 
-        if (userAsParticipant) {
-          // User is a participant
+        if (isParticipant || isPayer) {
+          // Convert expense amount to target currency
           const convertedAmount = convertToCurrency(
-            userAsParticipant.amountOwed || 0,
+            expense.totalAmount || 0,
             expense.currency,
             currency
           );
-          userShare = convertedAmount;
-          totalExpenses += userShare;
-
-          // Check if the user's split is settled based on transactionId
-          if (userAsParticipant.transactionId) {
-            totalSettled += userShare;
-          } else {
-            totalPending += userShare;
-          }
+          totalExpenses += convertedAmount;
         }
+      });
 
-        // Calculate user's share as the payer (if applicable)
-        const payerShare = calculatePayerShare(expense, userId);
-        if (payerShare > 0) {
-          const convertedPayerAmount = convertToCurrency(
-            payerShare,
-            expense.currency,
-            currency
-          );
-          totalExpenses += convertedPayerAmount; // Add to total expenses as payer
+      // 2. PENDING PAYMENTS: Calculate net pending payments using the Who Owes Whom logic
+      // Create a map of net debts between people
+      const netDebts = new Map();
 
-          // Assume payer’s share is settled if transactionId exists for any split, otherwise pending
-          const anySplitSettled = expense.splitDetails.some(
-            (split) => split.transactionId
-          );
-          if (anySplitSettled) {
-            totalSettled += convertedPayerAmount;
+      transactions.forEach((txn) => {
+        const sender = txn.sender._id.toString();
+        const receiver = txn.receiver._id.toString();
+        const amount = convertToCurrency(
+          txn.amount || 0,
+          txn.currency || "INR",
+          currency
+        );
+
+        // Only care about transactions involving the current user
+        if (sender === userId || receiver === userId) {
+          const pairKey = [sender, receiver].sort().join("|");
+
+          if (!netDebts.has(pairKey)) {
+            netDebts.set(pairKey, { from: sender, to: receiver, amount });
           } else {
-            totalPending += convertedPayerAmount;
+            const currentDebt = netDebts.get(pairKey);
+
+            // If the current direction matches the new transaction
+            if (currentDebt.from === sender && currentDebt.to === receiver) {
+              currentDebt.amount += amount;
+            }
+            // If the direction is reversed
+            else if (
+              currentDebt.from === receiver &&
+              currentDebt.to === sender
+            ) {
+              currentDebt.amount -= amount;
+
+              // If the balance flips direction, swap from and to
+              if (currentDebt.amount < 0) {
+                currentDebt.amount = Math.abs(currentDebt.amount);
+                const temp = currentDebt.from;
+                currentDebt.from = currentDebt.to;
+                currentDebt.to = temp;
+              }
+            }
           }
         }
       });
+
+      // Calculate user's total pending amount (money user owes to others - money others owe to user)
+      let totalPending = 0;
+
+      netDebts.forEach((debt) => {
+        // User owes someone else
+        if (debt.from === userId) {
+          totalPending += debt.amount;
+        }
+        // Someone owes the user
+        else if (debt.to === userId) {
+          // Don't subtract - this should be captured in totalSettled
+        }
+      });
+
+      // 3. SETTLED PAYMENTS: Result of total expenses minus pending payments
+      const totalSettled = Math.max(0, totalExpenses - totalPending);
 
       acc[currency] = {
         totalExpenses: Math.round(totalExpenses * 100) / 100, // Round to 2 decimal places
         totalPending: Math.round(totalPending * 100) / 100,
         totalSettled: Math.round(totalSettled * 100) / 100,
       };
+
       return acc;
     }, {});
 

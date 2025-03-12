@@ -376,7 +376,7 @@ const deleteExpense = async (req, res) => {
   }
 };
 
-// NEW: Returns aggregated totals (total expenses, pending & settled) with currency conversion
+// Updated getExpenseSummary function with corrected calculation logic
 const getExpenseSummary = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -461,28 +461,56 @@ const getExpenseSummary = async (req, res) => {
 
     // Calculate summary for each currency
     const convertedSummary = targetCurrencies.reduce((acc, currency) => {
-      // 1. TOTAL EXPENSES: Sum of all expenses where user is involved
+      // 1. TOTAL EXPENSES: Sum of only the user's contributions in all transactions
       let totalExpenses = 0;
 
       expenses.forEach((expense) => {
-        // Check if the user is involved in this expense
-        const isParticipant = expense.participants.some(
-          (p) => p._id.toString() === userId
-        );
-        const isPayer = expense.payer._id.toString() === userId;
+        // If user is the payer, add only the amount they paid and didn't get back
+        if (expense.payer._id.toString() === userId) {
+          // Calculate the user's contribution as payer
+          // The user's contribution is essentially what they paid but won't get back from participants
+          const totalExpenseAmount = expense.totalAmount || 0;
 
-        if (isParticipant || isPayer) {
-          // Convert expense amount to target currency
+          // Find total amount owed to payer from participants
+          const amountOwedToPayer = expense.splitDetails.reduce(
+            (sum, split) => {
+              return sum + (split.amountOwed || 0);
+            },
+            0
+          );
+
+          // The payer's actual contribution is what they paid minus what will be returned to them
+          const payerContribution = totalExpenseAmount - amountOwedToPayer;
+
+          // Convert to target currency
           const convertedAmount = convertToCurrency(
-            expense.totalAmount || 0,
+            payerContribution,
             expense.currency,
             currency
           );
+
           totalExpenses += convertedAmount;
+        }
+
+        // If user is a participant, add the amount they owe to the payer
+        else {
+          // Find user's split in this expense
+          const userSplit = expense.splitDetails.find(
+            (split) => split.userId && split.userId._id.toString() === userId
+          );
+
+          if (userSplit) {
+            const convertedAmount = convertToCurrency(
+              userSplit.amountOwed || 0,
+              expense.currency,
+              currency
+            );
+            totalExpenses += convertedAmount;
+          }
         }
       });
 
-      // 2. PENDING PAYMENTS: Calculate net pending payments using the Who Owes Whom logic
+      // 2. PENDING PAYMENTS: Calculate net pending payments
       // Create a map of net debts between people
       const netDebts = new Map();
 
@@ -535,10 +563,7 @@ const getExpenseSummary = async (req, res) => {
         if (debt.from === userId) {
           totalPending += debt.amount;
         }
-        // Someone owes the user
-        else if (debt.to === userId) {
-          // Don't subtract - this should be captured in totalSettled
-        }
+        // Someone owes the user (we don't subtract this from totalPending)
       });
 
       // 3. SETTLED PAYMENTS: Result of total expenses minus pending payments

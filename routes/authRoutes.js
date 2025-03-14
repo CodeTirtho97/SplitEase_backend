@@ -31,7 +31,7 @@ router.get(
 router.get(
   "/google/callback",
   cors({
-    origin: ["http://localhost:3000", "https://split-ease-v1-tirth.vercel.app"],
+    origin: ["http://localhost:3000", process.env.FRONTEND_URL],
     credentials: true,
     optionsSuccessStatus: 200,
   }),

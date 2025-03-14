@@ -11,8 +11,7 @@ passport.use(
     {
       clientID: process.env.GOOGLE_CLIENT_ID,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-      callbackURL:
-        "https://splitease-backend-z1pc.onrender.com/api/auth/google/callback",
+      callbackURL: process.env.BACKEND_GOOGLE_CALLBACK_URL,
       passReqToCallback: true,
       scope: ["profile", "email"],
     },

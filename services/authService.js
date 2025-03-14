@@ -88,7 +88,7 @@ const googleAuthCallback = async (req, res) => {
     // Define the frontend URL based on environment
     const frontendUrl =
       process.env.NODE_ENV === "production"
-        ? "https://split-ease-v1-tirth.vercel.app"
+        ? process.env.FRONTEND_URL
         : "http://localhost:3000";
 
     // BASE64 ENCODE THE USER DATA
@@ -107,7 +107,7 @@ const googleAuthCallback = async (req, res) => {
     console.error("Google Auth Callback Error:", error);
     const frontendUrl =
       process.env.NODE_ENV === "production"
-        ? "https://split-ease-v1-tirth.vercel.app"
+        ? process.env.FRONTEND_URL
         : "http://localhost:3000";
     return res.redirect(`${frontendUrl}/login?error=auth_failed`);
   }

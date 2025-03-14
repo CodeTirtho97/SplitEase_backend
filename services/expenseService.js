@@ -20,12 +20,13 @@ const ExchangeRate = mongoose.model("ExchangeRate", exchangeRateSchema);
 // Utility function to fetch and store exchange rates
 const fetchAndStoreExchangeRates = async (forceUpdate = false) => {
   try {
+    const EXCHANGE_URL = process.env.EXCHANGE_RATE_URL;
     const API_KEY = process.env.EXCHANGERATES_API_KEY;
     if (!API_KEY) {
       throw new Error("ExchangeRate-API key is missing in .env file");
     }
     const BASE_CURRENCY = process.env.BASE_CURRENCY || "INR";
-    const exchangeRatesUrl = `https://api.apilayer.com/exchangerates_data/latest?access_key=${API_KEY}&base=${BASE_CURRENCY}`;
+    const exchangeRatesUrl = `${EXCHANGE_URL}?access_key=${API_KEY}&base=${BASE_CURRENCY}`;
 
     //console.log("Fetching exchange rates from:", exchangeRatesUrl);
     const response = await axios.get(exchangeRatesUrl, {

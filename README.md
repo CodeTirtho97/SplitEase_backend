@@ -1,6 +1,6 @@
 # SplitEase - Expense Splitting Made Simple
 
-![SplitEase Logo](https://res.cloudinary.com/dwukdgjhq/image/upload/v1/profile_pics/splitease-logo)
+![SplitEase](image.png)
 
 ## 🚀 Overview
 

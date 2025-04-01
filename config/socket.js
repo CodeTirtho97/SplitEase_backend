@@ -1,14 +1,15 @@
 const { Server } = require("socket.io");
 const jwt = require("jsonwebtoken");
-const { subscribeToChannel } = require("./redis");
+const { subscribeToChannel, redisClient } = require("./redis");
 require("dotenv").config();
 
 // Store active connections
 const activeConnections = new Map();
+let io = null;
 
 // Initialize Socket.io server
 const initSocketServer = (server) => {
-  const io = new Server(server, {
+  io = new Server(server, {
     cors: {
       origin: [process.env.FRONTEND_URL, "http://localhost:3000"],
       methods: ["GET", "POST"],
@@ -17,7 +18,7 @@ const initSocketServer = (server) => {
   });
 
   // Authentication middleware
-  io.use(async (socket, next) => {
+  io.use((socket, next) => {
     const token = socket.handshake.auth.token;
     if (!token) {
       return next(new Error("Authentication error: No token provided"));
@@ -84,72 +85,89 @@ const initSocketServer = (server) => {
   console.log("🔌 WebSocket server initialized");
 
   // Connect Socket.io with Redis Pub/Sub for event broadcasting
-  setupRedisSubscribers(io);
+  if (redisClient.isReady) {
+    setupRedisSubscribers(io);
+  } else {
+    console.warn(
+      "⚠️ Redis not ready, will set up subscribers when Redis connects"
+    );
+    redisClient.on("ready", () => {
+      console.log("🔄 Redis is now ready, setting up subscribers");
+      setupRedisSubscribers(io);
+    });
+  }
 
   return io;
 };
 
 // Setup Redis subscribers to broadcast events to relevant Socket.io rooms
 const setupRedisSubscribers = (io) => {
-  // Expense created/updated event
-  subscribeToChannel("expense_events", (message) => {
-    const { event, expense, groupId, affectedUsers } = message;
+  try {
+    // Expense created/updated event
+    subscribeToChannel("expense_events", (message) => {
+      const { event, expense, groupId, affectedUsers } = message;
 
-    // Emit to group room
-    if (groupId) {
-      io.to(`group:${groupId}`).emit("expense_update", { event, expense });
-    }
+      // Emit to group room
+      if (groupId) {
+        io.to(`group:${groupId}`).emit("expense_update", { event, expense });
+      }
 
-    // Emit to individual user rooms
-    if (affectedUsers && Array.isArray(affectedUsers)) {
-      affectedUsers.forEach((userId) => {
-        io.to(`user:${userId}`).emit("expense_update", { event, expense });
-      });
-    }
-  });
-
-  // Transaction status event
-  subscribeToChannel("transaction_events", (message) => {
-    const { event, transaction, sender, receiver } = message;
-
-    // Notify sender
-    io.to(`user:${sender}`).emit("transaction_update", { event, transaction });
-
-    // Notify receiver
-    io.to(`user:${receiver}`).emit("transaction_update", {
-      event,
-      transaction,
+      // Emit to individual user rooms
+      if (affectedUsers && Array.isArray(affectedUsers)) {
+        affectedUsers.forEach((userId) => {
+          io.to(`user:${userId}`).emit("expense_update", { event, expense });
+        });
+      }
     });
-  });
 
-  // Group update event
-  subscribeToChannel("group_events", (message) => {
-    const { event, group, affectedUsers } = message;
+    // Transaction status event
+    subscribeToChannel("transaction_events", (message) => {
+      const { event, transaction, sender, receiver } = message;
 
-    // Emit to group room
-    io.to(`group:${group._id}`).emit("group_update", { event, group });
-
-    // Emit to individual user rooms
-    if (affectedUsers && Array.isArray(affectedUsers)) {
-      affectedUsers.forEach((userId) => {
-        io.to(`user:${userId}`).emit("group_update", { event, group });
+      // Notify sender
+      io.to(`user:${sender}`).emit("transaction_update", {
+        event,
+        transaction,
       });
-    }
-  });
 
-  // User notification event
-  subscribeToChannel("notification_events", (message) => {
-    const { userId, notification } = message;
+      // Notify receiver
+      io.to(`user:${receiver}`).emit("transaction_update", {
+        event,
+        transaction,
+      });
+    });
 
-    // Emit to user's room
-    io.to(`user:${userId}`).emit("notification", notification);
-  });
+    // Group update event
+    subscribeToChannel("group_events", (message) => {
+      const { event, group, affectedUsers } = message;
 
-  console.log("✅ Redis subscribers configured for WebSocket events");
+      // Emit to group room
+      io.to(`group:${group._id}`).emit("group_update", { event, group });
+
+      // Emit to individual user rooms
+      if (affectedUsers && Array.isArray(affectedUsers)) {
+        affectedUsers.forEach((userId) => {
+          io.to(`user:${userId}`).emit("group_update", { event, group });
+        });
+      }
+    });
+
+    // User notification event
+    subscribeToChannel("notification_events", (message) => {
+      const { userId, notification } = message;
+
+      // Emit to user's room
+      io.to(`user:${userId}`).emit("notification", notification);
+    });
+
+    console.log("✅ Redis subscribers configured for WebSocket events");
+  } catch (error) {
+    console.error("❌ Error setting up Redis subscribers:", error);
+  }
 };
 
 // Helper function to send notification to specific user
-const sendUserNotification = async (userId, notification) => {
+const sendUserNotification = (userId, notification) => {
   if (!io) return false;
 
   io.to(`user:${userId}`).emit("notification", notification);

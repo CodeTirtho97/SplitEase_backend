@@ -176,13 +176,16 @@ const subscriber = redisClient.duplicate();
 // Connect Redis client and duplicates
 const connectRedis = async () => {
   try {
+    // Connect all clients and wait for them
     await redisClient.connect();
     await publisher.connect();
     await subscriber.connect();
-    console.log("🔄 Redis is Ready");
+
+    console.log("🔄 All Redis connections are Ready");
+    return true;
   } catch (error) {
     console.error("❌ Redis Connection Failed:", error.message);
-    process.exit(1);
+    throw error; // Throw instead of exiting to allow caller to handle
   }
 };
 
@@ -196,21 +199,27 @@ const publishEvent = async (channel, message) => {
 };
 
 // Subscribe to an event channel
-const subscribeToChannel = async (channel, callback) => {
+const subscribeToChannel = (channel, callback) => {
   if (!subscriber.isReady) {
     throw new Error("Redis subscriber not ready");
   }
 
-  await subscriber.subscribe(channel, (message) => {
-    try {
-      const parsedMessage = JSON.parse(message);
-      callback(parsedMessage);
-    } catch (error) {
-      console.error(`❌ Error processing message from ${channel}:`, error);
-    }
-  });
+  try {
+    subscriber.subscribe(channel, (message) => {
+      try {
+        const parsedMessage = JSON.parse(message);
+        callback(parsedMessage);
+      } catch (error) {
+        console.error(`❌ Error processing message from ${channel}:`, error);
+      }
+    });
 
-  console.log(`🔔 Subscribed to channel: ${channel}`);
+    console.log(`🔔 Subscribed to channel: ${channel}`);
+    return true;
+  } catch (error) {
+    console.error(`❌ Error subscribing to channel ${channel}:`, error);
+    throw error;
+  }
 };
 
 module.exports = {

@@ -7,6 +7,11 @@ const Group = require("../models/Group");
 const User = require("../models/User");
 const { calculateSplitDetails } = require("../utils/splitCalculator");
 const Transaction = require("../models/Transaction");
+const {
+  publishExpenseEvent,
+  publishNotification,
+  createNotification,
+} = require("../utils/socketEvents");
 
 // Model for storing exchange rates
 const exchangeRateSchema = new mongoose.Schema({
@@ -261,6 +266,53 @@ const createExpense = async (req, res) => {
     });
     const transactions = await Promise.all(transactionPromises);
 
+    // Add WebSocket Notifications
+    try {
+      // Get full payer details for better notification
+      const payerDetails = await User.findById(payerId).select("fullName");
+      const payerName = payerDetails ? payerDetails.fullName : "Someone";
+
+      // Publish expense creation event
+      await publishExpenseEvent(
+        "expense_created",
+        {
+          _id: newExpense._id,
+          description: newExpense.description,
+          totalAmount: newExpense.totalAmount,
+          currency: newExpense.currency,
+          type: newExpense.type,
+          payer: {
+            _id: payerId,
+            fullName: payerName,
+          },
+        },
+        groupObjectId ? groupObjectId.toString() : null,
+        uniqueParticipants.map((id) => id.toString())
+      );
+
+      // Send individual notifications to each participant
+      const participantIds = uniqueParticipants
+        .filter((id) => !id.equals(payerId))
+        .map((id) => id.toString());
+
+      for (const userId of participantIds) {
+        const notification = createNotification(
+          "expense",
+          "New Expense Added",
+          `${payerName} added a new expense: ${description} (${currency} ${totalAmount})`,
+          {
+            expenseId: newExpense._id.toString(),
+            groupId: groupObjectId ? groupObjectId.toString() : null,
+          }
+        );
+
+        await publishNotification(userId, notification);
+      }
+    } catch (error) {
+      // Log but don't fail the request if notifications fail
+      console.error("Failed to send real-time notifications:", error);
+    }
+
     res.status(201).json({
       message: "Expense added successfully with transactions",
       expense: newExpense,
@@ -369,6 +421,46 @@ const deleteExpense = async (req, res) => {
 
     // ✅ Delete the expense
     await Expense.findByIdAndDelete(expenseId);
+
+    try {
+      // Notify all affected users
+      const affectedUsers = Array.from(
+        new Set([
+          ...expense.participants.map((p) => p.toString()),
+          expense.payer.toString(),
+        ])
+      );
+
+      // Publish delete event
+      await publishExpenseEvent(
+        "expense_deleted",
+        {
+          _id: expenseId,
+          description: expense.description,
+        },
+        expense.groupId ? expense.groupId.toString() : null,
+        affectedUsers
+      );
+
+      // Send notifications to affected users except the deleter
+      const otherUsers = affectedUsers.filter((id) => id !== userId);
+
+      for (const userId of otherUsers) {
+        const notification = createNotification(
+          "expense_deleted",
+          "Expense Deleted",
+          `An expense "${expense.description}" has been deleted`,
+          { expenseId }
+        );
+
+        await publishNotification(userId, notification);
+      }
+    } catch (error) {
+      console.error(
+        "Failed to send real-time notifications for expense deletion:",
+        error
+      );
+    }
 
     res.status(200).json({ message: "Expense deleted successfully" });
   } catch (error) {

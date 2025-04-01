@@ -3,6 +3,11 @@ const Transaction = require("../models/Transaction");
 const Expense = require("../models/Expense");
 const Group = require("../models/Group");
 const User = require("../models/User");
+const {
+  publishTransactionEvent,
+  publishNotification,
+  createNotification,
+} = require("../utils/socketEvents");
 
 // Get pending transactions for the logged-in user (as sender, status: "Pending")
 const getPendingTransactions = async (req, res) => {
@@ -86,9 +91,7 @@ const getTransactionHistory = async (req, res) => {
 const settleTransaction = async (req, res) => {
   try {
     const { transactionId } = req.params;
-    const { status, mode } = req.body; // Removed pin from required fields
-
-    //console.log("Received transactionId:", transactionId); // Debug the received transactionId
+    const { status, mode } = req.body;
 
     if (!["Success", "Failed"].includes(status)) {
       return res
@@ -105,7 +108,7 @@ const settleTransaction = async (req, res) => {
     // Find transaction using the hashed transactionId as a string
     const transaction = await Transaction.findOne({
       transactionId: transactionId,
-    }); // Use transactionId as a string
+    });
     if (!transaction) {
       return res
         .status(404)
@@ -164,6 +167,72 @@ const settleTransaction = async (req, res) => {
 
         await expense.save();
       }
+    }
+
+    // Send real-time notifications via WebSockets
+    try {
+      // Populate sender and receiver information for better notifications
+      await transaction.populate("sender", "fullName");
+      await transaction.populate("receiver", "fullName");
+      await transaction.populate("expenseId", "description");
+
+      const senderName = transaction.sender.fullName || "Someone";
+      const receiverName = transaction.receiver.fullName || "Someone";
+      const expenseName = transaction.expenseId.description || "an expense";
+
+      // Prepare simplified transaction object for WebSocket
+      const simplifiedTransaction = {
+        _id: transaction._id.toString(),
+        amount: transaction.amount,
+        currency: transaction.currency,
+        status: transaction.status,
+        mode: transaction.mode,
+        updatedAt: transaction.updatedAt,
+      };
+
+      // Publish transaction update event
+      await publishTransactionEvent(
+        status === "Success" ? "transaction_settled" : "transaction_failed",
+        simplifiedTransaction,
+        transaction.sender.toString(),
+        transaction.receiver.toString()
+      );
+
+      // Create and send notification to receiver
+      const notification = createNotification(
+        status === "Success" ? "payment_received" : "payment_failed",
+        status === "Success" ? "Payment Received" : "Payment Failed",
+        status === "Success"
+          ? `${senderName} has paid you ${transaction.currency} ${transaction.amount} for "${expenseName}" via ${mode}`
+          : `${senderName}'s payment of ${transaction.currency} ${transaction.amount} for "${expenseName}" has failed`,
+        {
+          transactionId: transaction._id.toString(),
+          expenseId: transaction.expenseId._id.toString(),
+        }
+      );
+
+      await publishNotification(transaction.receiver.toString(), notification);
+
+      // If all expense splits are settled, notify the expense owner
+      if (expense && expense.expenseStatus && expense.payer) {
+        const completionNotification = createNotification(
+          "expense_completed",
+          "Expense Fully Settled",
+          `All payments for "${expenseName}" have been completed`,
+          { expenseId: expense._id.toString() }
+        );
+
+        await publishNotification(
+          expense.payer.toString(),
+          completionNotification
+        );
+      }
+    } catch (error) {
+      console.error(
+        "Failed to send real-time notifications for transaction:",
+        error
+      );
+      // Don't fail the API response due to notification errors
     }
 
     res.status(200).json({

@@ -59,7 +59,6 @@ const {
   getRecentExpenses,
   getExpenseBreakdown,
 } = require("../services/expenseService");
-const protect = require("../middleware/authMiddleware");
 
 // Rate limit expense creation to 20 requests per minute
 router.post("/create", protect, rateLimiter(20, 60), createExpense);

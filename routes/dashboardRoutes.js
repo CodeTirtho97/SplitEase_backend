@@ -48,7 +48,6 @@ router.post("/clear-cache", protect, async (req, res) => {
 module.exports = router;
 
 // routes/expenseRoutes.js (with Redis caching and rate limiting)
-const express = require("express");
 const { cacheMiddleware, rateLimiter, clearCache } = require("../config/redis");
 const {
   createExpense,

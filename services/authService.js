@@ -3,11 +3,24 @@ const crypto = require("crypto");
 const bcrypt = require("bcryptjs");
 const sendEmail = require("../utils/sendEmail");
 const jwt = require("jsonwebtoken");
+const { storeSession, deleteSession } = require("../config/redis");
 require("dotenv").config();
 
-// ✅ Generate JWT Token
-const generateToken = (userId) => {
-  return jwt.sign({ id: userId }, process.env.JWT_SECRET, { expiresIn: "7d" });
+// ✅ Generate JWT Token with Redis session storage
+const generateToken = async (userId) => {
+  const token = jwt.sign({ id: userId }, process.env.JWT_SECRET, {
+    expiresIn: "7d",
+  });
+
+  // Store token in Redis for validation and easy invalidation
+  try {
+    await storeSession(userId, token);
+  } catch (error) {
+    console.error("Redis session storage failed:", error);
+    // Continue anyway as JWT can work without Redis
+  }
+
+  return token;
 };
 
 // ✅ Signup Function
@@ -30,9 +43,12 @@ const signupUser = async (req, res) => {
 
     const newUser = await User.create({ fullName, email, gender, password });
 
+    // Generate token with Redis session
+    const token = await generateToken(newUser._id);
+
     res.status(201).json({
       message: "User registered successfully",
-      token: generateToken(newUser._id),
+      token,
       user: {
         userId: newUser._id,
         fullName: newUser.fullName,
@@ -58,9 +74,12 @@ const loginUser = async (req, res) => {
     if (!isPasswordMatch)
       return res.status(401).json({ message: "Invalid email or password" });
 
+    // Generate token with Redis session
+    const token = await generateToken(user._id);
+
     res.json({
       message: "Login successful",
-      token: generateToken(user._id),
+      token,
       user: {
         userId: user._id,
         fullName: user.fullName,
@@ -73,6 +92,20 @@ const loginUser = async (req, res) => {
   }
 };
 
+// ✅ Logout Function (new)
+const logoutUser = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    // Delete session from Redis
+    await deleteSession(userId);
+
+    res.status(200).json({ message: "Logged out successfully" });
+  } catch (error) {
+    res.status(500).json({ message: "Server Error", error: error.message });
+  }
+};
+
 // ✅ Google OAuth Callback (Updated for frontend integration)
 const googleAuthCallback = async (req, res) => {
   try {
@@ -80,10 +113,16 @@ const googleAuthCallback = async (req, res) => {
       return res.status(401).json({ message: "Google authentication failed" });
     }
 
-    //console.log("Google auth successful, user data:", req.user); // Add debug logging
-
     const user = req.user.user;
     const token = req.user.token;
+
+    // Store token in Redis for the Google OAuth user too
+    try {
+      await storeSession(user._id, token);
+    } catch (error) {
+      console.error("Redis session storage failed for Google user:", error);
+      // Continue anyway as JWT can work without Redis
+    }
 
     // Define the frontend URL based on environment
     const frontendUrl =
@@ -93,11 +132,6 @@ const googleAuthCallback = async (req, res) => {
 
     // BASE64 ENCODE THE USER DATA
     const encodedUser = Buffer.from(JSON.stringify(user)).toString("base64");
-
-    // Log the redirect URL for debugging
-    // console.log(
-    //   `Redirecting to: ${frontendUrl}/auth/google/callback?token=${token}&userData=${encodedUser}`
-    // );
 
     // Redirect with data in URL parameters
     return res.redirect(
@@ -187,6 +221,14 @@ const resetPassword = async (req, res) => {
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(newPassword, salt);
 
+    // Delete any existing sessions when resetting password (security measure)
+    try {
+      await deleteSession(user._id.toString());
+    } catch (error) {
+      console.error("Redis session deletion failed:", error);
+      // Continue anyway
+    }
+
     await User.updateOne(
       { _id: user._id },
       {
@@ -208,6 +250,7 @@ const resetPassword = async (req, res) => {
 module.exports = {
   signupUser,
   loginUser,
+  logoutUser,
   googleAuthCallback,
   forgotPassword,
   resetPassword,

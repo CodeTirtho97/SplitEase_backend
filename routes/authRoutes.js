@@ -1,33 +1,41 @@
+// routes/authRoutes.js
 const express = require("express");
 const passport = require("passport");
 const cors = require("cors");
 const {
   signupUser,
   loginUser,
+  logoutUser, // Add the new logout function
   googleAuthCallback,
   forgotPassword,
   resetPassword,
 } = require("../services/authService");
 const protect = require("../middleware/authMiddleware");
+const { rateLimiter } = require("../config/redis"); // Add rate limiting
 
 const router = express.Router();
 
-// ✅ Form-Based Signup & Login
-router.post("/signup", signupUser);
-router.post("/login", loginUser);
+// Apply rate limiting to auth routes (5 attempts per minute)
+const authRateLimiter = rateLimiter(
+  5,
+  60,
+  "Too many login attempts, please try again later"
+);
 
-// ✅ Google OAuth Routes (Separate for Login & Signup)
-// router.get(
-//   "/google/signup",
-//   passport.authenticate("google", { scope: ["profile", "email"] })
-// );
+// ✅ Form-Based Signup & Login with rate limiting
+router.post("/signup", authRateLimiter, signupUser);
+router.post("/login", authRateLimiter, loginUser);
 
+// ✅ New Logout Route
+router.post("/logout", protect, logoutUser);
+
+// ✅ Google OAuth Routes
 router.get(
   "/google/login",
   passport.authenticate("google", { scope: ["profile", "email"] })
 );
 
-// ✅ Google OAuth Callback (For Both Signup & Login)
+// ✅ Google OAuth Callback
 router.get(
   "/google/callback",
   cors({
@@ -40,12 +48,12 @@ router.get(
 );
 
 // ✅ Forgot Password Route
-router.post("/forgot-password", forgotPassword);
+router.post("/forgot-password", authRateLimiter, forgotPassword);
 
 // ✅ Reset Password Route
-router.post("/reset-password", resetPassword);
+router.post("/reset-password", authRateLimiter, resetPassword);
 
-// ✅ **Protected Route (For Testing JWT Token)**
+// ✅ Protected Route (For Testing JWT Token)
 router.get("/protected", protect, (req, res) => {
   res.json({ message: "Access granted", user: req.user });
 });

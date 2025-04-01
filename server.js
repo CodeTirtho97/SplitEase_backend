@@ -1,7 +1,9 @@
 require("dotenv").config();
 const express = require("express");
+const http = require("http"); // Add HTTP module for Socket.IO
 const connectDB = require("./config/db");
 const { connectRedis } = require("./config/redis");
+const { initSocketServer } = require("./config/socket"); // Import WebSocket setup
 const cors = require("cors");
 const cronJobs = require("./utils/cronJobs");
 
@@ -44,6 +46,9 @@ app.use(
   })
 );
 
+// Create HTTP server from Express app (needed for Socket.IO)
+const server = http.createServer(app);
+
 // Connect to MongoDB & Redis with Error Handling
 (async () => {
   try {
@@ -55,6 +60,9 @@ app.use(
     process.exit(1); // Exit process if DB connection fails
   }
 })();
+
+// Initialize Socket.IO
+const io = initSocketServer(server);
 
 // Routes
 app.use("/api", dashboardRoutes);
@@ -118,9 +126,12 @@ app.use((req, res, next) => {
 
 // 🚀 **Only start the server when NOT running Jest tests**
 const PORT = process.env.PORT || 5000;
-const server = app.listen(PORT, () => {
-  console.log(`🚀 Server running!`);
+
+// Use 'server' instead of 'app' to start the HTTP server with Socket.IO
+server.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`🔌 WebSocket server is active`);
 });
 
 // ✅ Export app for testing (Do NOT start server in Jest)
-module.exports = { app, server };
+module.exports = { app, server, io };

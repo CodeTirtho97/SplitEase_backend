@@ -1,5 +1,6 @@
 const jwt = require("jsonwebtoken");
 const User = require("../models/User");
+const { validateSession } = require("../config/redis");
 require("dotenv").config();
 
 const protect = async (req, res, next) => {
@@ -14,6 +15,20 @@ const protect = async (req, res, next) => {
 
       // Verify token
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+      // First, verify if the token matches what's stored in Redis
+      // This allows for token revocation on logout
+      try {
+        const isValid = await validateSession(decoded.id, token);
+        if (!isValid) {
+          return res
+            .status(401)
+            .json({ message: "Session expired or invalid" });
+        }
+      } catch (error) {
+        console.error("Redis session validation error:", error);
+        // Continue with JWT validation if Redis is unavailable
+      }
 
       // Fetch user without password
       req.user = await User.findById(decoded.id).select("_id fullName email");

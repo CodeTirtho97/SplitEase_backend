@@ -53,6 +53,11 @@ router.post("/forgot-password", authRateLimiter, forgotPassword);
 // ✅ Reset Password Route
 router.post("/reset-password", authRateLimiter, resetPassword);
 
+router.post("/validate-token", protect, (req, res) => {
+  // If the protect middleware passed, token is valid
+  res.json({ valid: true, userId: req.user.id });
+});
+
 // ✅ Protected Route (For Testing JWT Token)
 router.get("/protected", protect, (req, res) => {
   res.json({ message: "Access granted", user: req.user });

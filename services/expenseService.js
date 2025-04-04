@@ -470,6 +470,7 @@ const deleteExpense = async (req, res) => {
 };
 
 // Updated getExpenseSummary function with corrected calculation logic
+// Updated getExpenseSummary function with corrected calculation logic
 const getExpenseSummary = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -493,13 +494,24 @@ const getExpenseSummary = async (req, res) => {
       .populate("payer", "fullName")
       .populate("splitDetails.userId", "fullName");
 
-    // Get all pending transactions to calculate net debts
-    const transactions = await Transaction.find({
+    // Get all pending transactions
+    const pendingTransactions = await Transaction.find({
       $or: [
         { sender: userId }, // User is the sender
         { receiver: userId }, // User is the receiver
       ],
       status: "Pending", // Only consider pending transactions
+    })
+      .populate("sender", "fullName")
+      .populate("receiver", "fullName");
+
+    // Get all settled transactions
+    const settledTransactions = await Transaction.find({
+      $or: [
+        { sender: userId }, // User is the sender
+        { receiver: userId }, // User is the receiver
+      ],
+      status: "Success", // Only consider successful transactions
     })
       .populate("sender", "fullName")
       .populate("receiver", "fullName");
@@ -603,52 +615,10 @@ const getExpenseSummary = async (req, res) => {
         }
       });
 
-      // 2. PENDING PAYMENTS: Calculate net pending payments
-      // Create a map of net debts between people
-      const netDebts = new Map();
+      // 2. PENDING PAYMENTS: Calculate from actual pending transactions
+      let totalPending = 0;
 
-      transactions.forEach((txn) => {
-        const sender = txn.sender._id.toString();
-        const receiver = txn.receiver._id.toString();
-        const amount = convertToCurrency(
-          txn.amount || 0,
-          txn.currency || "INR",
-          currency
-        );
-
-        // Only care about transactions involving the current user
-        if (sender === userId || receiver === userId) {
-          const pairKey = [sender, receiver].sort().join("|");
-
-          if (!netDebts.has(pairKey)) {
-            netDebts.set(pairKey, { from: sender, to: receiver, amount });
-          } else {
-            const currentDebt = netDebts.get(pairKey);
-
-            // If the current direction matches the new transaction
-            if (currentDebt.from === sender && currentDebt.to === receiver) {
-              currentDebt.amount += amount;
-            }
-            // If the direction is reversed
-            else if (
-              currentDebt.from === receiver &&
-              currentDebt.to === sender
-            ) {
-              currentDebt.amount -= amount;
-
-              // If the balance flips direction, swap from and to
-              if (currentDebt.amount < 0) {
-                currentDebt.amount = Math.abs(currentDebt.amount);
-                const temp = currentDebt.from;
-                currentDebt.from = currentDebt.to;
-                currentDebt.to = temp;
-              }
-            }
-          }
-        }
-      });
-
-      // Calculate user's total pending amount (money user owes to others - money others owe to user)
+      // Calculate pending amount directly from transactions
       pendingTransactions.forEach((txn) => {
         const sender = txn.sender._id.toString();
         // Only count transactions where the user is the sender (they owe money)
@@ -663,21 +633,22 @@ const getExpenseSummary = async (req, res) => {
         // Do not subtract amounts owed to the user, as this is a separate concept
       });
 
-      // Ensure we don't have negative pending amounts
-      totalPending = Math.max(0, Math.round(totalPending * 100) / 100);
+      // 3. SETTLED PAYMENTS: Calculate directly from settled transactions
+      let totalSettled = 0;
 
-      // 3. SETTLED PAYMENTS: Result of total expenses minus pending payments
-      const totalSettled =
-        Math.round(
-          settledTransactions.reduce((sum, txn) => {
-            const amount = convertToCurrency(
-              txn.amount || 0,
-              txn.currency || "INR",
-              currency
-            );
-            return sum + amount;
-          }, 0) * 100
-        ) / 100;
+      // Calculate settled amount directly from transactions
+      settledTransactions.forEach((txn) => {
+        const sender = txn.sender._id.toString();
+        // Only count transactions where the user is the sender (they paid money)
+        if (sender === userId) {
+          const amount = convertToCurrency(
+            txn.amount || 0,
+            txn.currency || "INR",
+            currency
+          );
+          totalSettled += amount;
+        }
+      });
 
       acc[currency] = {
         totalExpenses: Math.round(totalExpenses * 100) / 100, // Round to 2 decimal places

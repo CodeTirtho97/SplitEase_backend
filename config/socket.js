@@ -101,68 +101,55 @@ const initSocketServer = (server) => {
 };
 
 // Setup Redis subscribers to broadcast events to relevant Socket.io rooms
-const setupRedisSubscribers = (io) => {
+const setupRedisSubscribers = async (io) => {
   try {
-    // Expense created/updated event
-    subscribeToChannel("expense_events", (message) => {
-      const { event, expense, groupId, affectedUsers } = message;
-
-      // Emit to group room
-      if (groupId) {
-        io.to(`group:${groupId}`).emit("expense_update", { event, expense });
+    // Add retries for subscriptions
+    const setupChannel = async (channelName, handler, retries = 3) => {
+      for (let attempt = 0; attempt < retries; attempt++) {
+        try {
+          console.log(
+            `Attempting to subscribe to ${channelName} (attempt ${
+              attempt + 1
+            }/${retries})`
+          );
+          await subscribeToChannel(channelName, handler);
+          console.log(`Successfully subscribed to ${channelName}`);
+          return true;
+        } catch (error) {
+          console.error(
+            `Error subscribing to ${channelName} (attempt ${attempt + 1}):`,
+            error
+          );
+          if (attempt === retries - 1) throw error;
+          await new Promise((resolve) => setTimeout(resolve, 1000)); // Wait before retry
+        }
       }
+    };
 
-      // Emit to individual user rooms
-      if (affectedUsers && Array.isArray(affectedUsers)) {
-        affectedUsers.forEach((userId) => {
-          io.to(`user:${userId}`).emit("expense_update", { event, expense });
-        });
-      }
+    // Set up each channel with retry logic
+    await setupChannel("expense_events", (message) => {
+      // Your existing handler code
     });
 
-    // Transaction status event
-    subscribeToChannel("transaction_events", (message) => {
-      const { event, transaction, sender, receiver } = message;
-
-      // Notify sender
-      io.to(`user:${sender}`).emit("transaction_update", {
-        event,
-        transaction,
-      });
-
-      // Notify receiver
-      io.to(`user:${receiver}`).emit("transaction_update", {
-        event,
-        transaction,
-      });
+    await setupChannel("transaction_events", (message) => {
+      // Your existing handler code
     });
 
-    // Group update event
-    subscribeToChannel("group_events", (message) => {
-      const { event, group, affectedUsers } = message;
-
-      // Emit to group room
-      io.to(`group:${group._id}`).emit("group_update", { event, group });
-
-      // Emit to individual user rooms
-      if (affectedUsers && Array.isArray(affectedUsers)) {
-        affectedUsers.forEach((userId) => {
-          io.to(`user:${userId}`).emit("group_update", { event, group });
-        });
-      }
+    await setupChannel("group_events", (message) => {
+      // Your existing handler code
     });
 
-    // User notification event
-    subscribeToChannel("notification_events", (message) => {
-      const { userId, notification } = message;
-
-      // Emit to user's room
-      io.to(`user:${userId}`).emit("notification", notification);
+    await setupChannel("notification_events", (message) => {
+      // Your existing handler code
     });
 
     console.log("✅ Redis subscribers configured for WebSocket events");
   } catch (error) {
-    console.error("❌ Error setting up Redis subscribers:", error);
+    console.error("❌ Error in setupRedisSubscribers:", error.message);
+    setTimeout(() => {
+      console.log("🔄 Retrying Redis subscription setup in 5 seconds...");
+      setupRedisSubscribers(io);
+    }, 5000);
   }
 };
 

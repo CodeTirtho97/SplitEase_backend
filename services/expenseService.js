@@ -649,18 +649,35 @@ const getExpenseSummary = async (req, res) => {
       });
 
       // Calculate user's total pending amount (money user owes to others - money others owe to user)
-      let totalPending = 0;
-
-      netDebts.forEach((debt) => {
-        // User owes someone else
-        if (debt.from === userId) {
-          totalPending += debt.amount;
+      pendingTransactions.forEach((txn) => {
+        const sender = txn.sender._id.toString();
+        // Only count transactions where the user is the sender (they owe money)
+        if (sender === userId) {
+          const amount = convertToCurrency(
+            txn.amount || 0,
+            txn.currency || "INR",
+            currency
+          );
+          totalPending += amount;
         }
-        // Someone owes the user (we don't subtract this from totalPending)
+        // Do not subtract amounts owed to the user, as this is a separate concept
       });
 
+      // Ensure we don't have negative pending amounts
+      totalPending = Math.max(0, Math.round(totalPending * 100) / 100);
+
       // 3. SETTLED PAYMENTS: Result of total expenses minus pending payments
-      const totalSettled = Math.max(0, totalExpenses - totalPending);
+      const totalSettled =
+        Math.round(
+          settledTransactions.reduce((sum, txn) => {
+            const amount = convertToCurrency(
+              txn.amount || 0,
+              txn.currency || "INR",
+              currency
+            );
+            return sum + amount;
+          }, 0) * 100
+        ) / 100;
 
       acc[currency] = {
         totalExpenses: Math.round(totalExpenses * 100) / 100, // Round to 2 decimal places

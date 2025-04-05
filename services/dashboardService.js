@@ -26,189 +26,318 @@ let getDashboardStats = async (userId) => {
       .exec();
 
     if (!exchangeRatesData) {
-      throw new Error("No exchange rates found in database");
+      console.log("No exchange rates found, using default 1:1 conversion");
     }
 
     // Function to convert currency amounts to INR
     const convertToINR = (amount, currency) => {
-      const rates = exchangeRatesData.rates || {};
-      const currencyUpper = (currency || "INR").toUpperCase();
-      if (currencyUpper === "INR") {
+      // Default to INR if no currency specified
+      if (!currency || currency.toUpperCase() === "INR") {
         return amount;
       }
+
+      // If no exchange rates, use 1:1 conversion
+      if (!exchangeRatesData || !exchangeRatesData.rates) {
+        console.log(
+          `No exchange rates available, using 1:1 conversion for ${amount} ${currency}`
+        );
+        return amount;
+      }
+
+      const rates = exchangeRatesData.rates;
+      const currencyUpper = currency.toUpperCase();
       const rate = rates[currencyUpper];
+
       if (!rate || rate === 0) {
-        console.error(`No valid rate found for ${currency}, defaulting to INR`);
+        console.error(
+          `No valid rate found for ${currency}, defaulting to 1:1 conversion`
+        );
         return amount;
       }
+
       const inrAmount = amount * (1 / rate);
+      console.log(
+        `Converted ${amount} ${currency} to ${inrAmount} INR (rate: ${rate})`
+      );
       return inrAmount;
     };
 
-    // ===== Correct calculation of totalExpenses =====
-    // Get all expenses where user participated (either as payer or participant)
-    const allUserExpenses = await Expense.find({
-      $or: [
-        { payer: objectIdUserId }, // User paid
-        { participants: objectIdUserId }, // User is a participant
-      ],
-    })
-      .populate("splitDetails")
-      .select("totalAmount currency splitDetails payer");
+    // DIRECT DB QUERIES FOR ACCURATE DATA
+    // ===================================
+
+    // 1. SETTLED PAYMENTS - Get all successful transactions where user is sender
+    console.log(
+      "Querying settled payments where user is sender:",
+      objectIdUserId
+    );
+    const settledTransactionsQuery = await Transaction.find({
+      sender: objectIdUserId,
+      status: "Success",
+    }).select("amount currency _id createdAt updatedAt");
 
     console.log(
-      `Found ${allUserExpenses.length} expenses involving user ${userId}`
+      `Found ${settledTransactionsQuery.length} settled transactions`
     );
 
-    // Calculate total expenses (user's personal spending, not the whole expense amount)
-    let totalExpenses = 0;
-    allUserExpenses.forEach((expense) => {
-      const inrAmount = convertToINR(
+    let settledPayments = 0;
+    settledTransactionsQuery.forEach((txn) => {
+      const inrAmount = convertToINR(txn.amount, txn.currency || "INR");
+      settledPayments += inrAmount;
+      console.log(`Settled payment: ${inrAmount} INR (${txn._id})`);
+    });
+
+    // Round to nearest integer
+    settledPayments = Math.floor(settledPayments);
+    console.log(`Total settled payments: ${settledPayments} INR`);
+
+    // 2. PENDING PAYMENTS - Get all pending transactions where user is sender
+    console.log(
+      "Querying pending payments where user is sender:",
+      objectIdUserId
+    );
+    const pendingTransactionsQuery = await Transaction.find({
+      sender: objectIdUserId,
+      status: "Pending",
+    }).select("amount currency _id createdAt");
+
+    console.log(
+      `Found ${pendingTransactionsQuery.length} pending transactions`
+    );
+
+    let pendingPayments = 0;
+    pendingTransactionsQuery.forEach((txn) => {
+      const inrAmount = convertToINR(txn.amount, txn.currency || "INR");
+      pendingPayments += inrAmount;
+      console.log(`Pending payment: ${inrAmount} INR (${txn._id})`);
+    });
+
+    // Round to nearest integer
+    pendingPayments = Math.floor(pendingPayments);
+    console.log(`Total pending payments: ${pendingPayments} INR`);
+
+    // 3. TOTAL EXPENSES - Calculate from both transactions and expenses
+    // Since transactions represent the actual money movement, we need to:
+    // a) Get all expenses where user is the payer
+    // b) Get all expenses where user is a participant
+    // c) Calculate user's share based on split rules
+
+    console.log("Calculating total expenses for user:", objectIdUserId);
+
+    // a) Start with sum of all payments (settled + pending)
+    let totalExpenses = settledPayments + pendingPayments;
+    console.log(`Base total expenses (from payments): ${totalExpenses} INR`);
+
+    // b) Add expenses where user is payer but hasn't created transactions yet
+    const userExpensesQuery = await Expense.find({
+      payer: objectIdUserId,
+    })
+      .populate({
+        path: "splitDetails",
+        populate: { path: "user" },
+      })
+      .select("totalAmount currency splitDetails payer participants createdAt");
+
+    console.log(
+      `Found ${userExpensesQuery.length} expenses where user is payer`
+    );
+
+    // Process each expense where user is payer
+    for (const expense of userExpensesQuery) {
+      const expenseInINR = convertToINR(
         expense.totalAmount,
         expense.currency || "INR"
       );
 
-      if (expense.payer && expense.payer.toString() === userId.toString()) {
-        // User is the payer - only count their personal share
-        if (expense.splitDetails && expense.splitDetails.length > 0) {
-          // Find user's share in the split
-          const userSplit = expense.splitDetails.find(
-            (split) => split.user && split.user.toString() === userId.toString()
-          );
+      // Find user's personal share in this expense
+      let userShare = 0;
 
-          if (userSplit && typeof userSplit.amountOwed === "number") {
-            // Add user's personal share
-            const personalShare = convertToINR(
-              userSplit.amountOwed,
-              expense.currency || "INR"
-            );
-            totalExpenses += personalShare;
-            console.log(`User expense share: ${personalShare} INR (as payer)`);
-          } else {
-            // If no split found for user, assume equal split
-            const equalShare = inrAmount / expense.splitDetails.length;
-            totalExpenses += equalShare;
-            console.log(
-              `User expense share: ${equalShare} INR (as payer with equal split)`
-            );
-          }
+      if (expense.splitDetails && expense.splitDetails.length > 0) {
+        // Find the user's split
+        const userSplit = expense.splitDetails.find(
+          (split) =>
+            split.user &&
+            split.user._id &&
+            split.user._id.equals(objectIdUserId)
+        );
+
+        if (userSplit && typeof userSplit.amountOwed === "number") {
+          userShare = convertToINR(
+            userSplit.amountOwed,
+            expense.currency || "INR"
+          );
+          console.log(
+            `User's share in expense: ${userShare} INR (based on split)`
+          );
         } else {
-          // If no split details, count the full amount (possible solo expense)
-          totalExpenses += inrAmount;
-          console.log(`User expense: ${inrAmount} INR (as sole payer)`);
+          // If user's split is not found, estimate equal split
+          const participantCount = expense.participants
+            ? expense.participants.length
+            : expense.splitDetails
+            ? expense.splitDetails.length
+            : 1;
+
+          userShare = expenseInINR / Math.max(1, participantCount);
+          console.log(
+            `User's share in expense: ${userShare} INR (estimated equal split)`
+          );
         }
       } else {
-        // User is a participant but not the payer
-        if (expense.splitDetails && expense.splitDetails.length > 0) {
-          // Find user's share in the split
-          const userSplit = expense.splitDetails.find(
-            (split) => split.user && split.user.toString() === userId.toString()
+        // No split details, assume user is sole participant
+        userShare = expenseInINR;
+        console.log(
+          `User's share in expense: ${userShare} INR (sole participant)`
+        );
+      }
+
+      // Add to total expenses if not already counted through transactions
+      // We need to check if this expense has generated transactions
+      const expenseTransactions = await Transaction.find({
+        expenseId: expense._id,
+        sender: objectIdUserId,
+      });
+
+      if (expenseTransactions.length === 0) {
+        // No transactions for this expense yet, add user's share
+        totalExpenses += userShare;
+        console.log(
+          `Adding ${userShare} INR to total expenses (no transactions yet)`
+        );
+      } else {
+        console.log(
+          `Expense ${expense._id} already has transactions, not adding to total`
+        );
+      }
+    }
+
+    // c) Add expenses where user is participant but not payer
+    const participantExpensesQuery = await Expense.find({
+      participants: objectIdUserId,
+      payer: { $ne: objectIdUserId },
+    })
+      .populate({
+        path: "splitDetails",
+        populate: { path: "user" },
+      })
+      .select("totalAmount currency splitDetails payer participants createdAt");
+
+    console.log(
+      `Found ${participantExpensesQuery.length} expenses where user is participant but not payer`
+    );
+
+    // Process each expense where user is participant but not payer
+    for (const expense of participantExpensesQuery) {
+      // Find user's share in this expense
+      if (expense.splitDetails && expense.splitDetails.length > 0) {
+        // Find the user's split
+        const userSplit = expense.splitDetails.find(
+          (split) =>
+            split.user &&
+            split.user._id &&
+            split.user._id.equals(objectIdUserId)
+        );
+
+        if (userSplit && typeof userSplit.amountOwed === "number") {
+          const userShare = convertToINR(
+            userSplit.amountOwed,
+            expense.currency || "INR"
           );
 
-          if (userSplit && typeof userSplit.amountOwed === "number") {
-            // Add user's personal share
-            const personalShare = convertToINR(
-              userSplit.amountOwed,
-              expense.currency || "INR"
-            );
-            totalExpenses += personalShare;
+          // Check if this is already counted in transactions
+          const expenseTransactions = await Transaction.find({
+            expenseId: expense._id,
+            sender: objectIdUserId,
+          });
+
+          if (expenseTransactions.length === 0) {
+            // No transactions for this expense yet, add user's share
+            totalExpenses += userShare;
             console.log(
-              `User expense share: ${personalShare} INR (as participant)`
+              `Adding ${userShare} INR to total expenses (participant expense, no transactions yet)`
+            );
+          } else {
+            console.log(
+              `Expense ${expense._id} already has transactions, not adding to total`
             );
           }
         }
       }
+    }
+
+    // Round total expenses to nearest integer
+    totalExpenses = Math.floor(totalExpenses);
+    console.log(`Final total expenses: ${totalExpenses} INR`);
+
+    // Ensure logical consistency: total expenses cannot be less than settled payments
+    if (totalExpenses < settledPayments) {
+      console.log(
+        `Warning: Total expenses (${totalExpenses}) is less than settled payments (${settledPayments}). Adjusting...`
+      );
+      totalExpenses = settledPayments;
+    }
+
+    // 4. GROUPS & MEMBERS
+    console.log("Querying groups for user:", objectIdUserId);
+    const userGroups = await Group.find({
+      members: objectIdUserId,
+    }).select("members name _id createdAt");
+
+    const totalGroups = userGroups.length;
+    console.log(`Found ${totalGroups} groups for user`);
+
+    // Get unique members across all groups (excluding the user)
+    const uniqueMembers = new Set();
+    userGroups.forEach((group) => {
+      if (group.members && Array.isArray(group.members)) {
+        group.members.forEach((memberId) => {
+          if (memberId && !memberId.equals(objectIdUserId)) {
+            uniqueMembers.add(memberId.toString());
+          }
+        });
+      }
+    });
+
+    const totalMembers = uniqueMembers.size;
+    console.log(`Found ${totalMembers} unique members across all groups`);
+
+    // 5. GROUP EXPENSES - Sum of all expenses in user's groups
+    const userGroupIds = userGroups.map((g) => g._id);
+
+    console.log("Querying group expenses for user's groups:", userGroupIds);
+    const groupExpensesQuery = await Expense.find({
+      groupId: { $in: userGroupIds },
+    }).select("totalAmount currency groupId createdAt");
+
+    console.log(
+      `Found ${groupExpensesQuery.length} expenses across all groups`
+    );
+
+    let groupExpenses = 0;
+    groupExpensesQuery.forEach((expense) => {
+      const inrAmount = convertToINR(
+        expense.totalAmount,
+        expense.currency || "INR"
+      );
+      groupExpenses += inrAmount;
     });
 
     // Round to nearest integer
-    totalExpenses = Math.round(totalExpenses);
-    console.log(
-      `Total personal expenses for user ${userId}: ${totalExpenses} INR`
-    );
+    groupExpenses = Math.floor(groupExpenses);
+    console.log(`Total group expenses: ${groupExpenses} INR`);
 
-    // ===== Pending Payments =====
-    // Get transactions where user is sender and status is "Pending"
-    const pendingTransactions = await Transaction.find({
-      sender: objectIdUserId,
-      status: "Pending",
-    }).select("amount currency");
-
-    const pendingPayments = Math.floor(
-      pendingTransactions.reduce((sum, txn) => {
-        const inrAmount = convertToINR(txn.amount, txn.currency || "INR");
-        return sum + inrAmount;
-      }, 0)
-    );
-    console.log(`Pending payments for user ${userId}: ${pendingPayments} INR`);
-
-    // ===== Settled Payments =====
-    // Get transactions where user is sender and status is "Success"
-    const settledTransactions = await Transaction.find({
-      sender: objectIdUserId,
-      status: "Success",
-    }).select("amount currency");
-
-    const settledPayments = Math.floor(
-      settledTransactions.reduce((sum, txn) => {
-        const inrAmount = convertToINR(txn.amount, txn.currency || "INR");
-        return sum + inrAmount;
-      }, 0)
-    );
-    console.log(`Settled payments for user ${userId}: ${settledPayments} INR`);
-
-    // ===== Total Groups =====
-    const groups = await Group.find({ members: objectIdUserId });
-    const totalGroups = groups.length;
-    console.log(`Total groups for user ${userId}: ${totalGroups}`);
-
-    // ===== Total Members =====
-    // Get unique members across all groups
-    const allMembers = new Set();
-    groups.forEach((group) => {
-      group.members.forEach((member) => {
-        if (!member.equals(objectIdUserId)) {
-          allMembers.add(member.toString());
-        }
-      });
-    });
-    const totalMembers = allMembers.size;
-    console.log(`Total unique members for user ${userId}: ${totalMembers}`);
-
-    // ===== Group Expenses =====
-    // Total of all expenses in groups user is a member of
-    const groupIds = groups.map((group) => group._id);
-    const groupExpensesData = await Expense.find({
-      groupId: { $in: groupIds },
-    }).select("totalAmount currency");
-
-    const groupExpenses = Math.floor(
-      groupExpensesData.reduce((sum, expense) => {
-        const inrAmount = convertToINR(
-          expense.totalAmount,
-          expense.currency || "INR"
-        );
-        return sum + inrAmount;
-      }, 0)
-    );
-    console.log(
-      `Total group expenses for user ${userId}: ${groupExpenses} INR`
-    );
-
-    // Ensure all values make logical sense
-    // Total expenses should always be at least as much as settled payments
-    const correctedTotalExpenses = Math.max(totalExpenses, settledPayments);
-
-    // Return all stats
-    return {
-      totalExpenses: correctedTotalExpenses,
+    // 6. CONSTRUCT AND RETURN FINAL RESULT
+    const result = {
+      totalExpenses,
       pendingPayments,
       settledPayments,
       totalGroups,
       totalMembers,
       groupExpenses,
     };
+
+    console.log("Final dashboard stats for user:", result);
+    return result;
   } catch (error) {
-    console.error("Error in getDashboardStats:", error);
+    console.error("Error calculating dashboard stats:", error);
     throw error;
   }
 };

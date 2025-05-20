@@ -2,7 +2,7 @@ require("dotenv").config();
 const express = require("express");
 const http = require("http"); // Add HTTP module for Socket.IO
 const connectDB = require("./config/db");
-const { connectRedis } = require("./config/redis");
+const { connectRedis, keepAlive } = require("./config/redis"); // Import keepAlive
 const { initSocketServer } = require("./config/socket"); // Import WebSocket setup
 const cors = require("cors");
 const cronJobs = require("./utils/cronJobs");
@@ -49,12 +49,18 @@ app.use(
 // Create HTTP server from Express app (needed for Socket.IO)
 const server = http.createServer(app);
 
-// Connect to MongoDB & Redis with Error Handling
+// Connect to MongoDB & Redis with Error Handling and Keep-Alive
 (async () => {
   try {
     await connectDB();
     await connectRedis();
+
+    // Set up Redis keep-alive to prevent deletion due to inactivity
+    // Ping every week (adjust as needed based on Upstash's policy)
+    await keepAlive(7 * 24 * 60 * 60 * 1000);
+
     console.log("✅ Database & Redis connected successfully!");
+    console.log("🔄 Redis keep-alive mechanism activated");
   } catch (error) {
     console.error("❌ Error connecting to MongoDB/Redis:", error.message);
     process.exit(1); // Exit process if DB connection fails
@@ -122,6 +128,14 @@ app.use((req, res, next) => {
   res.setHeader("Cross-Origin-Opener-Policy", "same-origin-allow-popups");
   res.setHeader("Cross-Origin-Embedder-Policy", "unsafe-none");
   next();
+});
+
+// Setup graceful shutdown
+process.on("SIGINT", async () => {
+  const { shutdown } = require("./config/redis");
+  console.log("🛑 Gracefully shutting down server...");
+  shutdown();
+  process.exit(0);
 });
 
 // 🚀 **Only start the server when NOT running Jest tests**

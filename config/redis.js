@@ -32,6 +32,38 @@ redisClient.on("ready", () => console.log("🟢 Redis Client Ready"));
 redisClient.on("reconnecting", () => console.log("🔄 Redis Reconnecting..."));
 redisClient.on("end", () => console.log("🔴 Redis Connection Ended"));
 
+// NEW: Keep-alive mechanism to prevent database deletion due to inactivity
+let keepAliveInterval = null;
+
+const keepAlive = async (interval = 7 * 24 * 60 * 60 * 1000) => {
+  // Default: once a week
+  const pingRedis = async () => {
+    try {
+      if (!redisClient.isReady) {
+        await connectRedis();
+      }
+      const timestamp = new Date().toISOString();
+      await redisClient.set("keepalive", timestamp);
+      console.log(`✅ Redis keep-alive ping sent at ${timestamp}`);
+    } catch (error) {
+      console.error("❌ Redis keep-alive error:", error);
+    }
+  };
+
+  // Clear any existing interval
+  if (keepAliveInterval) {
+    clearInterval(keepAliveInterval);
+  }
+
+  // Initial ping
+  await pingRedis();
+
+  // Schedule regular pings
+  keepAliveInterval = setInterval(pingRedis, interval);
+
+  return true;
+};
+
 // Cache middleware for Express routes
 const cacheMiddleware = (duration) => {
   return async (req, res, next) => {
@@ -222,6 +254,21 @@ const subscribeToChannel = (channel, callback) => {
   }
 };
 
+// NEW: Graceful shutdown function to clean up resources
+const shutdown = () => {
+  if (keepAliveInterval) {
+    clearInterval(keepAliveInterval);
+    console.log("🛑 Redis keep-alive interval cleared");
+  }
+
+  if (redisClient.isReady) {
+    redisClient.quit();
+    publisher.quit();
+    subscriber.quit();
+    console.log("🛑 Redis connections closed");
+  }
+};
+
 module.exports = {
   redisClient,
   connectRedis,
@@ -233,4 +280,6 @@ module.exports = {
   clearCache,
   publishEvent,
   subscribeToChannel,
+  keepAlive,
+  shutdown,
 };

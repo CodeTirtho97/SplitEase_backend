@@ -57,7 +57,7 @@ const server = http.createServer(app);
 
     // Set up Redis keep-alive to prevent deletion due to inactivity
     // Ping every week (adjust as needed based on Upstash's policy)
-    await keepAlive(7 * 24 * 60 * 60 * 1000);
+    await keepAlive(1 * 24 * 60 * 60 * 1000);
 
     console.log("✅ Database & Redis connected successfully!");
     console.log("🔄 Redis keep-alive mechanism activated");

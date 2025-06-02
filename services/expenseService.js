@@ -22,21 +22,70 @@ const exchangeRateSchema = new mongoose.Schema({
 
 const ExchangeRate = mongoose.model("ExchangeRate", exchangeRateSchema);
 
+// Function to get cached rates or return basic fallback
+const getFallbackFromCache = async () => {
+  try {
+    const BASE_CURRENCY = process.env.BASE_CURRENCY || "INR";
+    const cachedRate = await ExchangeRate.findOne({
+      baseCurrency: BASE_CURRENCY,
+    }).sort({ timestamp: -1 });
+
+    if (cachedRate) {
+      return cachedRate.rates;
+    }
+
+    // Return basic rates if no cache exists
+    return {
+      INR: 1,
+      USD: 0.012,
+      EUR: 0.011,
+      GBP: 0.0095,
+      JPY: 1.8,
+    };
+  } catch (error) {
+    console.error("Error getting fallback rates:", error);
+    return {
+      INR: 1,
+      USD: 0.012,
+      EUR: 0.011,
+      GBP: 0.0095,
+      JPY: 1.8,
+    };
+  }
+};
+
 // Utility function to fetch and store exchange rates
 const fetchAndStoreExchangeRates = async (forceUpdate = false) => {
   try {
     const EXCHANGE_URL = process.env.EXCHANGE_RATE_URL;
     const API_KEY = process.env.EXCHANGERATES_API_KEY;
-    if (!API_KEY) {
-      throw new Error("ExchangeRate-API key is missing in .env file");
-    }
     const BASE_CURRENCY = process.env.BASE_CURRENCY || "INR";
+
+    // Validate environment variables
+    if (!EXCHANGE_URL) {
+      console.warn(
+        "EXCHANGE_RATE_URL is missing in .env file, using fallback rates"
+      );
+      return await getFallbackFromCache();
+    }
+    if (!API_KEY) {
+      console.warn(
+        "EXCHANGERATES_API_KEY is missing in .env file, using fallback rates"
+      );
+      return await getFallbackFromCache();
+    }
+
     const exchangeRatesUrl = `${EXCHANGE_URL}?access_key=${API_KEY}&base=${BASE_CURRENCY}`;
 
     //console.log("Fetching exchange rates from:", exchangeRatesUrl);
     const response = await axios.get(exchangeRatesUrl, {
-      headers: { apikey: API_KEY },
+      timeout: 10000, // 10 second timeout
+      headers: {
+        apikey: API_KEY,
+        "User-Agent": "SplitEase-App/1.0",
+      },
     });
+
     const rates = response.data.rates;
 
     if (!rates || Object.keys(rates).length === 0) {
@@ -57,8 +106,14 @@ const fetchAndStoreExchangeRates = async (forceUpdate = false) => {
     //console.log("Exchange rates updated successfully:", rates);
     return rates;
   } catch (error) {
-    console.error("Error fetching exchange rates:", error.message, error.stack);
-    throw new Error(`Failed to fetch exchange rates: ${error.message}`);
+    console.error("Error fetching exchange rates:", error.message);
+    // Try to return cached rates instead of throwing error
+    try {
+      return await getFallbackFromCache();
+    } catch (fallbackError) {
+      console.error("Error getting fallback rates:", fallbackError);
+      throw new Error(`Failed to fetch exchange rates: ${error.message}`);
+    }
   }
 };
 

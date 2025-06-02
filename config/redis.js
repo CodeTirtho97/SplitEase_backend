@@ -43,10 +43,21 @@ const keepAlive = async (interval = 7 * 24 * 60 * 60 * 1000) => {
         await connectRedis();
       }
       const timestamp = new Date().toISOString();
-      await redisClient.set("keepalive", timestamp);
+
+      // Perform both read and write operations to ensure activity
+      await redisClient.set("keepalive", timestamp, { EX: 86400 }); // Expire in 24 hours
+      await redisClient.get("keepalive"); // Read operation
+      await redisClient.incr("ping_counter"); // Increment counter
+
       console.log(`✅ Redis keep-alive ping sent at ${timestamp}`);
     } catch (error) {
       console.error("❌ Redis keep-alive error:", error);
+      // Try to reconnect if there's an error
+      try {
+        await connectRedis();
+      } catch (reconnectError) {
+        console.error("❌ Redis reconnection failed:", reconnectError);
+      }
     }
   };
 

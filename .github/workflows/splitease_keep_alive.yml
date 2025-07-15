@@ -2,10 +2,10 @@ name: 🚀 Keep SplitEase Backend & Redis Alive
 
 on:
   schedule:
-    # Run every 10 minutes to prevent Render cold starts
-    - cron: '*/10 * * * *'
+    # Run every 59 minutes to prevent Render cold starts
+    - cron: '*/59 * * * *'
     # Run every hour for Redis keep-alive (additional protection)
-    - cron: '0 * * * *'
+    - cron: '55 * * * *'
     # Run daily health check at 6 AM UTC
     - cron: '0 6 * * *'
   

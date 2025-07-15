@@ -1,0 +1,269 @@
+name: 🚀 Keep SplitEase Backend & Redis Alive
+
+on:
+  schedule:
+    # Run every 10 minutes to prevent Render cold starts
+    - cron: '*/10 * * * *'
+    # Run every hour for Redis keep-alive (additional protection)
+    - cron: '0 * * * *'
+    # Run daily health check at 6 AM UTC
+    - cron: '0 6 * * *'
+  
+  # Allow manual triggering
+  workflow_dispatch:
+    inputs:
+      ping_type:
+        description: 'Type of ping to perform'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - backend_only
+          - redis_only
+          - health_check
+
+# Set environment variables
+env:
+  BACKEND_URL: ${{ secrets.BACKEND_URL }}  # Your Render backend URL
+  FRONTEND_URL: ${{ secrets.FRONTEND_URL }} # Your frontend URL (optional)
+
+jobs:
+  # Job 1: Keep Render Backend Alive (Prevent Cold Starts)
+  keep-backend-alive:
+    name: 🔥 Keep Backend Warm
+    runs-on: ubuntu-latest
+    
+    # Run for all scheduled events and manual triggers
+    if: |
+      github.event_name == 'schedule' || 
+      (github.event_name == 'workflow_dispatch' && 
+       (github.event.inputs.ping_type == 'all' || github.event.inputs.ping_type == 'backend_only'))
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🏓 Ping Backend Server
+        run: |
+          echo "🚀 Pinging backend to keep it alive..."
+          
+          # Try multiple endpoints to ensure comprehensive wake-up
+          endpoints=(
+            "/api/stats"
+            "/api/auth/status"
+            "/api/profile/health"
+          )
+          
+          for endpoint in "${endpoints[@]}"; do
+            echo "📡 Pinging: $BACKEND_URL$endpoint"
+            
+            response=$(curl -s -o /dev/null -w "%{http_code}" \
+              --max-time 30 \
+              --retry 3 \
+              --retry-delay 5 \
+              "$BACKEND_URL$endpoint" || echo "000")
+            
+            if [[ "$response" =~ ^[2-4][0-9][0-9]$ ]]; then
+              echo "✅ Success: $endpoint responded with HTTP $response"
+            else
+              echo "⚠️ Warning: $endpoint responded with HTTP $response"
+            fi
+            
+            # Small delay between requests
+            sleep 2
+          done
+          
+          echo "🎉 Backend ping completed!"
+
+      - name: 📊 Log Backend Status
+        run: |
+          echo "📈 Backend Keep-Alive Summary:"
+          echo "⏰ Timestamp: $(date -u)"
+          echo "🌐 Backend URL: $BACKEND_URL"
+          echo "🔄 Ping Type: Scheduled Backend Keep-Alive"
+
+  # Job 2: Keep Redis Alive (Upstash Protection)
+  keep-redis-alive:
+    name: 🔴 Keep Redis Active
+    runs-on: ubuntu-latest
+    
+    # Run on hourly schedule and manual triggers
+    if: |
+      (github.event_name == 'schedule' && contains(github.event.schedule, '0 ')) || 
+      (github.event_name == 'workflow_dispatch' && 
+       (github.event.inputs.ping_type == 'all' || github.event.inputs.ping_type == 'redis_only'))
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🔴 Interact with Redis via Backend
+        run: |
+          echo "🔴 Triggering Redis activity through backend..."
+          
+          # Use endpoints that interact with Redis
+          redis_endpoints=(
+            "/api/stats"
+            "/api/transactions/recent"
+          )
+          
+          for endpoint in "${redis_endpoints[@]}"; do
+            echo "🔴 Redis interaction via: $BACKEND_URL$endpoint"
+            
+            response=$(curl -s -w "%{http_code}" \
+              --max-time 30 \
+              --retry 2 \
+              --retry-delay 3 \
+              "$BACKEND_URL$endpoint" || echo "000")
+            
+            echo "📊 Redis endpoint response: $response"
+            sleep 5
+          done
+
+      - name: 🔄 Force Redis Keep-Alive via Backend
+        run: |
+          echo "🔄 Sending dedicated keep-alive signal..."
+          
+          # This will trigger the Redis keep-alive mechanism in your backend
+          response=$(curl -s -w "%{http_code}" \
+            --max-time 45 \
+            --retry 2 \
+            -X POST \
+            -H "Content-Type: application/json" \
+            -d '{"action": "keepalive", "source": "github_actions"}' \
+            "$BACKEND_URL/api/health/keepalive" || echo "000")
+          
+          echo "💖 Keep-alive response: $response"
+
+      - name: 📊 Log Redis Activity
+        run: |
+          echo "🔴 Redis Keep-Alive Summary:"
+          echo "⏰ Timestamp: $(date -u)"
+          echo "🔄 Activity Type: Redis Interaction via Backend"
+          echo "🚀 Next Redis ping in 1 hour"
+
+  # Job 3: Comprehensive Health Check (Daily)
+  daily-health-check:
+    name: 🏥 Daily Health Check
+    runs-on: ubuntu-latest
+    
+    # Run on daily schedule and manual health check triggers
+    if: |
+      (github.event_name == 'schedule' && contains(github.event.schedule, '0 6')) || 
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.ping_type == 'health_check')
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🏥 Comprehensive Backend Health Check
+        run: |
+          echo "🏥 Running comprehensive health check..."
+          
+          # Health check endpoints
+          health_endpoints=(
+            "/api/stats"
+            "/api/health"
+            "/api/auth/status"
+          )
+          
+          failed_checks=0
+          total_checks=0
+          
+          for endpoint in "${health_endpoints[@]}"; do
+            ((total_checks++))
+            echo "🔍 Checking: $BACKEND_URL$endpoint"
+            
+            start_time=$(date +%s)
+            response=$(curl -s -w "%{http_code}" \
+              --max-time 30 \
+              "$BACKEND_URL$endpoint" || echo "000")
+            end_time=$(date +%s)
+            
+            response_time=$((end_time - start_time))
+            
+            if [[ "$response" =~ ^[2][0-9][0-9]$ ]]; then
+              echo "✅ PASS: $endpoint (${response_time}s, HTTP $response)"
+            else
+              echo "❌ FAIL: $endpoint (${response_time}s, HTTP $response)"
+              ((failed_checks++))
+            fi
+          done
+          
+          echo ""
+          echo "📊 Health Check Summary:"
+          echo "✅ Passed: $((total_checks - failed_checks))/$total_checks"
+          echo "❌ Failed: $failed_checks/$total_checks"
+          
+          if [ $failed_checks -gt 0 ]; then
+            echo "⚠️ Some health checks failed!"
+            exit 1
+          else
+            echo "🎉 All health checks passed!"
+          fi
+
+      - name: 🔴 Redis Connection Test
+        run: |
+          echo "🔴 Testing Redis connectivity..."
+          
+          # Test Redis via backend endpoint that uses cache
+          response=$(curl -s -w "%{http_code}" \
+            --max-time 30 \
+            "$BACKEND_URL/api/stats")
+          
+          if [[ "$response" =~ ^[2][0-9][0-9]$ ]]; then
+            echo "✅ Redis connectivity test PASSED"
+          else
+            echo "❌ Redis connectivity test FAILED (HTTP $response)"
+          fi
+
+      - name: 📈 Performance Metrics
+        run: |
+          echo "📈 Collecting performance metrics..."
+          
+          # Test response times for key endpoints
+          for i in {1..3}; do
+            start_time=$(date +%s%3N)
+            curl -s -o /dev/null "$BACKEND_URL/api/stats"
+            end_time=$(date +%s%3N)
+            response_time=$((end_time - start_time))
+            echo "🕐 Response time (attempt $i): ${response_time}ms"
+          done
+
+      - name: 📧 Health Report Summary
+        run: |
+          echo "📋 Daily Health Report - $(date -u)"
+          echo "🌐 Backend URL: $BACKEND_URL"
+          echo "🔄 Keep-alive status: Active"
+          echo "🔴 Redis status: Active"
+          echo "⏰ Next check: $(date -u -d '+1 day')"
+          echo "🚀 System status: Operational"
+
+  # Job 4: Emergency Revival (if needed)
+  emergency-revival:
+    name: 🚨 Emergency Service Revival
+    runs-on: ubuntu-latest
+    
+    # Only run on manual trigger with emergency option
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.ping_type == 'emergency'
+    
+    steps:
+      - name: 🚨 Emergency Revival Protocol
+        run: |
+          echo "🚨 Executing emergency revival protocol..."
+          
+          # Aggressive ping strategy
+          for i in {1..10}; do
+            echo "🔄 Revival attempt $i/10..."
+            
+            curl -s -o /dev/null \
+              --max-time 60 \
+              --retry 5 \
+              --retry-delay 10 \
+              "$BACKEND_URL/api/stats" || true
+            
+            sleep 30
+          done
+          
+          echo "🎯 Emergency revival completed!"

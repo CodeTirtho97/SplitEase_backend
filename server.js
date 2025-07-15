@@ -6,6 +6,7 @@ const { connectRedis, keepAlive } = require("./config/redis"); // Import keepAli
 const { initSocketServer } = require("./config/socket"); // Import WebSocket setup
 const cors = require("cors");
 const cronJobs = require("./utils/cronJobs");
+const healthRoutes = require("./routes/healthRoutes");
 
 const profileRoutes = require("./routes/profileRoutes");
 const authRoutes = require("./routes/authRoutes");
@@ -72,6 +73,7 @@ const io = initSocketServer(server);
 
 // Routes
 app.use("/api", dashboardRoutes);
+app.use("/api/health", healthRoutes);
 app.use("/api/profile", profileRoutes);
 app.use(passport.initialize());
 // Apply CORS specifically to /api/auth routes

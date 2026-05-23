@@ -49,7 +49,9 @@
     "razorpay": "^2.9.6",
     "redis": "^4.7.0",
     "socket.io": "^4.8.1",
-    "stripe": "^17.7.0"
+    "stripe": "^17.7.0",
+    "swagger-jsdoc": "^6.3.0",
+    "swagger-ui-express": "^5.0.1"
   },
   "devDependencies": {
     "dotenv": "^16.4.7",

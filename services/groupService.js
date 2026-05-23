@@ -3,6 +3,11 @@ const Group = require("../models/Group");
 const Expense = require("../models/Expense");
 const Transaction = require("../models/Transaction");
 const User = require("../models/User");
+const {
+  simplifyDebts,
+  calculateDebtReduction,
+  buildSettlementSummary,
+} = require("../utils/debtSimplifier");
 
 // ✅ Create a New Group with Full Validation
 const createGroup = async (req, res) => {
@@ -425,6 +430,115 @@ const getUserFriends = async (req, res) => {
   }
 };
 
+/**
+ * GET /api/groups/:groupId/debt-summary
+ *
+ * Computes the minimum number of transactions required to settle all pending
+ * debts inside a group using the Minimum Cash Flow (Splitwise) algorithm.
+ *
+ * For a group of N members, naive pairwise settlement can require up to
+ * N*(N-1) transactions. This endpoint reduces that to at most N-1 by:
+ *   1. Aggregating all pending transactions into net per-person balances.
+ *   2. Greedily matching the largest creditor against the largest debtor.
+ *   3. Returning the optimised settlement plan alongside reduction metrics.
+ */
+const getGroupDebtSummary = async (req, res) => {
+  try {
+    const { groupId } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(groupId)) {
+      return res.status(400).json({ message: "Invalid group ID format" });
+    }
+
+    const group = await Group.findById(groupId).populate(
+      "members",
+      "fullName email"
+    );
+    if (!group) {
+      return res.status(404).json({ message: "Group not found" });
+    }
+
+    // Verify caller is a member of the group
+    const userId = req.user.id;
+    const isMember = group.members.some((m) => m._id.toString() === userId);
+    if (!isMember) {
+      return res
+        .status(403)
+        .json({ message: "You are not a member of this group" });
+    }
+
+    // Fetch all expenses for the group, then all pending transactions for those expenses
+    const groupExpenses = await Expense.find({ groupId });
+    const expenseIds = groupExpenses.map((e) => e._id);
+
+    const pendingTransactions = await Transaction.find({
+      expenseId: { $in: expenseIds },
+      status: "Pending",
+    })
+      .populate("sender", "fullName email")
+      .populate("receiver", "fullName email");
+
+    if (pendingTransactions.length === 0) {
+      return res.status(200).json({
+        message: "No pending debts in this group",
+        group: { _id: group._id, name: group.name },
+        originalTransactionCount: 0,
+        optimizedTransactionCount: 0,
+        reductionPercentage: 0,
+        optimizedSettlements: [],
+        settlementSummary: [],
+      });
+    }
+
+    // Build raw debt list for the simplifier
+    const rawDebts = pendingTransactions.map((t) => ({
+      from: t.sender._id.toString(),
+      to: t.receiver._id.toString(),
+      amount: t.amount,
+    }));
+
+    const optimizedDebts = simplifyDebts(rawDebts);
+    const reductionPercentage = calculateDebtReduction(
+      rawDebts.length,
+      optimizedDebts.length
+    );
+
+    // Build a name map for human-readable output
+    const nameMap = {};
+    group.members.forEach((m) => {
+      nameMap[m._id.toString()] = m.fullName;
+    });
+
+    const settlementSummary = buildSettlementSummary(optimizedDebts, nameMap);
+
+    // Attach full member details to optimized debts for frontend consumption
+    const optimizedWithDetails = optimizedDebts.map((d) => ({
+      from: {
+        _id: d.from,
+        fullName: nameMap[d.from] || "Unknown",
+      },
+      to: {
+        _id: d.to,
+        fullName: nameMap[d.to] || "Unknown",
+      },
+      amount: d.amount,
+    }));
+
+    res.status(200).json({
+      message: "Group debt summary computed successfully",
+      group: { _id: group._id, name: group.name, type: group.type },
+      originalTransactionCount: rawDebts.length,
+      optimizedTransactionCount: optimizedDebts.length,
+      reductionPercentage,
+      optimizedSettlements: optimizedWithDetails,
+      settlementSummary,
+    });
+  } catch (error) {
+    console.error("Error computing group debt summary:", error);
+    res.status(500).json({ message: "Server Error", error: error.message });
+  }
+};
+
 module.exports = {
   createGroup,
   getUserGroups,
@@ -432,4 +546,5 @@ module.exports = {
   editGroup,
   deleteGroup,
   getUserFriends,
+  getGroupDebtSummary,
 };

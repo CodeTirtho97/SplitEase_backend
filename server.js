@@ -1,6 +1,8 @@
 require("dotenv").config();
 const express = require("express");
 const http = require("http"); // Add HTTP module for Socket.IO
+const swaggerUi = require("swagger-ui-express");
+const swaggerSpec = require("./config/swagger");
 const connectDB = require("./config/db");
 const { connectRedis, keepAlive } = require("./config/redis"); // Import keepAlive
 const { initSocketServer } = require("./config/socket"); // Import WebSocket setup
@@ -70,6 +72,22 @@ const server = http.createServer(app);
 
 // Initialize Socket.IO
 const io = initSocketServer(server);
+
+// Swagger API Docs — served at /api/docs
+app.use(
+  "/api/docs",
+  swaggerUi.serve,
+  swaggerUi.setup(swaggerSpec, {
+    customSiteTitle: "SplitEase API Docs",
+    customCss: ".swagger-ui .topbar { display: none }",
+    swaggerOptions: { persistAuthorization: true },
+  })
+);
+// Raw OpenAPI JSON (useful for Postman/Insomnia import)
+app.get("/api/docs.json", (req, res) => {
+  res.setHeader("Content-Type", "application/json");
+  res.send(swaggerSpec);
+});
 
 // Routes
 app.use("/api", dashboardRoutes);

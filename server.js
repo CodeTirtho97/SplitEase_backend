@@ -66,17 +66,21 @@ app.use(passport.initialize());
 // Create HTTP server from Express app (needed for Socket.IO)
 const server = http.createServer(app);
 
-// Connect to MongoDB & Redis with Error Handling and Keep-Alive
+// Connect to MongoDB (required) and Redis (optional — degraded mode if unavailable)
 (async () => {
   try {
     await connectDB();
-    await connectRedis();
-    await keepAlive(1 * 24 * 60 * 60 * 1000);
-    logger.info("Database & Redis connected successfully");
-    logger.info("Redis keep-alive mechanism activated");
   } catch (error) {
-    logger.error(`Error connecting to MongoDB/Redis: ${error.message}`);
+    logger.error(`MongoDB connection failed: ${error.message}`);
     process.exit(1);
+  }
+
+  const redisOk = await connectRedis();
+  if (redisOk) {
+    await keepAlive(1 * 24 * 60 * 60 * 1000);
+    logger.info("Redis keep-alive activated");
+  } else {
+    logger.warn("Redis unavailable — caching, rate limiting, and sessions will be skipped");
   }
 })();
 

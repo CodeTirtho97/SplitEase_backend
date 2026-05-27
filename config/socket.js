@@ -1,6 +1,6 @@
 const { Server } = require("socket.io");
 const jwt = require("jsonwebtoken");
-const { subscribeToChannel, redisClient } = require("./redis");
+const { subscribeToChannel, redisClient, KEY_PREFIX } = require("./redis");
 require("dotenv").config();
 
 // Store active connections
@@ -127,7 +127,7 @@ const setupRedisSubscribers = async (io) => {
     };
 
     // Set up each channel with retry logic
-    await setupChannel("expense_events", (message) => {
+    await setupChannel(`${KEY_PREFIX}expense_events`, (message) => {
       try {
         const data = JSON.parse(message);
         const { event, expense, groupId, affectedUsers } = data;
@@ -144,7 +144,7 @@ const setupRedisSubscribers = async (io) => {
       }
     });
 
-    await setupChannel("transaction_events", (message) => {
+    await setupChannel(`${KEY_PREFIX}transaction_events`, (message) => {
       try {
         const data = JSON.parse(message);
         const { event, transaction, sender, receiver } = data;
@@ -159,7 +159,7 @@ const setupRedisSubscribers = async (io) => {
       }
     });
 
-    await setupChannel("group_events", (message) => {
+    await setupChannel(`${KEY_PREFIX}group_events`, (message) => {
       try {
         const data = JSON.parse(message);
         const { event, group, affectedUsers } = data;
@@ -176,7 +176,7 @@ const setupRedisSubscribers = async (io) => {
       }
     });
 
-    await setupChannel("notification_events", (message) => {
+    await setupChannel(`${KEY_PREFIX}notification_events`, (message) => {
       try {
         const data = JSON.parse(message);
         const { userId, notification } = data;

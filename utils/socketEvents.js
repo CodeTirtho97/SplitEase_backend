@@ -1,9 +1,9 @@
-const { publishEvent } = require("../config/redis");
+const { publishEvent, KEY_PREFIX } = require("../config/redis");
 
 // Expense events
 const publishExpenseEvent = async (event, expense, groupId, affectedUsers) => {
   try {
-    await publishEvent("expense_events", {
+    await publishEvent(`${KEY_PREFIX}expense_events`, {
       event,
       expense,
       groupId,
@@ -25,7 +25,7 @@ const publishTransactionEvent = async (
   receiver
 ) => {
   try {
-    await publishEvent("transaction_events", {
+    await publishEvent(`${KEY_PREFIX}transaction_events`, {
       event,
       transaction,
       sender,
@@ -42,7 +42,7 @@ const publishTransactionEvent = async (
 // Group events
 const publishGroupEvent = async (event, group, affectedUsers) => {
   try {
-    await publishEvent("group_events", {
+    await publishEvent(`${KEY_PREFIX}group_events`, {
       event,
       group,
       affectedUsers,
@@ -58,7 +58,7 @@ const publishGroupEvent = async (event, group, affectedUsers) => {
 // User notification events
 const publishNotification = async (userId, notification) => {
   try {
-    await publishEvent("notification_events", {
+    await publishEvent(`${KEY_PREFIX}notification_events`, {
       userId,
       notification,
     });

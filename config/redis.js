@@ -1,36 +1,52 @@
 const { createClient } = require("redis");
+const logger = require("../utils/logger");
 require("dotenv").config();
+
+// Namespace prefix — keeps SplitEase keys/channels isolated when sharing a
+// Redis instance with another project. Set REDIS_KEY_PREFIX in your env to
+// override (e.g. "se:" or "splitease:"). Default: "splitease:".
+const KEY_PREFIX = process.env.REDIS_KEY_PREFIX || "splitease:";
 
 const redisUrl = process.env.REDIS_URL;
 
-// Ensure the Redis URL is valid
-if (!redisUrl.startsWith("rediss://")) {
-  console.error("❌ Invalid Redis URL: Must use 'rediss://' for Upstash.");
+if (!redisUrl || !redisUrl.startsWith("rediss://")) {
+  logger.error("Invalid or missing REDIS_URL — must start with 'rediss://'");
   process.exit(1);
 }
 
-const redisClient = createClient({
-  url: redisUrl,
-  socket: {
-    tls: true, // Required for secure connection
-    rejectUnauthorized: false, // Prevents SSL verification issues
-  },
-});
+// Exponential backoff: 1s → 2s → 4s → … capped at 30s.
+// Returning false after 10 retries stops the built-in reconnect so the
+// process doesn't spin forever when the host is permanently unreachable.
+const reconnectStrategy = (retries) => {
+  if (retries >= 10) {
+    logger.error("Redis: maximum reconnect attempts reached — giving up");
+    return false; // stop retrying
+  }
+  const delay = Math.min(1000 * Math.pow(2, retries), 30000);
+  logger.warn(`Redis reconnect attempt ${retries + 1} — retrying in ${delay}ms`);
+  return delay;
+};
 
-// Enhanced error handling with reconnection logic
-redisClient.on("error", (err) => {
-  console.error("❌ Redis Error:", err);
-  // Implement reconnection strategy
-  setTimeout(() => {
-    console.log("🔄 Attempting to reconnect to Redis...");
-    redisClient.connect().catch(console.error);
-  }, 5000); // Retry after 5 seconds
-});
+const makeClient = () =>
+  createClient({
+    url: redisUrl,
+    socket: {
+      tls: true,
+      rejectUnauthorized: false,
+      reconnectStrategy,
+    },
+  });
 
-redisClient.on("connect", () => console.log("✅ Connected to Upstash Redis"));
-redisClient.on("ready", () => console.log("🟢 Redis Client Ready"));
-redisClient.on("reconnecting", () => console.log("🔄 Redis Reconnecting..."));
-redisClient.on("end", () => console.log("🔴 Redis Connection Ended"));
+const redisClient = makeClient();
+
+// Log errors only — the reconnectStrategy handles retries automatically.
+// Do NOT call redisClient.connect() here; that fights the built-in reconnect
+// and causes "Socket already opened" errors.
+redisClient.on("error", (err) => logger.error(`Redis error: ${err.message}`));
+redisClient.on("connect", () => logger.info("Redis connected"));
+redisClient.on("ready", () => logger.info("Redis ready"));
+redisClient.on("reconnecting", () => logger.warn("Redis reconnecting…"));
+redisClient.on("end", () => logger.warn("Redis connection ended"));
 
 // NEW: Keep-alive mechanism to prevent database deletion due to inactivity
 let keepAliveInterval = null;
@@ -45,9 +61,9 @@ const keepAlive = async (interval = 7 * 24 * 60 * 60 * 1000) => {
       const timestamp = new Date().toISOString();
 
       // Perform both read and write operations to ensure activity
-      await redisClient.set("keepalive", timestamp, { EX: 86400 }); // Expire in 24 hours
-      await redisClient.get("keepalive"); // Read operation
-      await redisClient.incr("ping_counter"); // Increment counter
+      await redisClient.set(`${KEY_PREFIX}keepalive`, timestamp, { EX: 86400 });
+      await redisClient.get(`${KEY_PREFIX}keepalive`);
+      await redisClient.incr(`${KEY_PREFIX}ping_counter`);
 
       console.log(`✅ Redis keep-alive ping sent at ${timestamp}`);
     } catch (error) {
@@ -83,7 +99,7 @@ const cacheMiddleware = (duration) => {
     }
 
     // Create a unique key based on the route and query parameters
-    const key = `cache:${req.originalUrl || req.url}`;
+    const key = `${KEY_PREFIX}cache:${req.originalUrl || req.url}`;
 
     try {
       const cachedResponse = await redisClient.get(key);
@@ -129,7 +145,7 @@ const rateLimiter = (requests, per, errorMessage = "Too many requests") => {
 
     // Get client IP address
     const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
-    const key = `ratelimit:${ip}:${req.originalUrl || req.url}`;
+    const key = `${KEY_PREFIX}ratelimit:${ip}:${req.originalUrl || req.url}`;
 
     try {
       // Get current count for this IP and endpoint
@@ -164,7 +180,7 @@ const storeSession = async (userId, token, expiry = 60 * 60 * 24 * 7) => {
     throw new Error("Redis client not ready");
   }
 
-  const key = `session:${userId}`;
+  const key = `${KEY_PREFIX}session:${userId}`;
   await redisClient.set(key, token, {
     EX: expiry, // Expires in seconds (default 7 days)
   });
@@ -178,7 +194,7 @@ const validateSession = async (userId, token) => {
     return false;
   }
 
-  const key = `session:${userId}`;
+  const key = `${KEY_PREFIX}session:${userId}`;
   const storedToken = await redisClient.get(key);
 
   return storedToken === token;
@@ -190,7 +206,7 @@ const deleteSession = async (userId) => {
     return false;
   }
 
-  const key = `session:${userId}`;
+  const key = `${KEY_PREFIX}session:${userId}`;
   await redisClient.del(key);
 
   return true;
@@ -202,7 +218,7 @@ const clearCache = async (pattern) => {
     return false;
   }
 
-  const keys = await redisClient.keys(`cache:${pattern}`);
+  const keys = await redisClient.keys(`${KEY_PREFIX}cache:${pattern}`);
 
   if (keys.length > 0) {
     await redisClient.del(keys);
@@ -212,23 +228,27 @@ const clearCache = async (pattern) => {
   return true;
 };
 
-// Pub/Sub for real-time events
+// Pub/Sub clients — duplicated so they each have an independent socket.
+// They inherit the reconnectStrategy from the parent client config.
 const publisher = redisClient.duplicate();
 const subscriber = redisClient.duplicate();
 
-// Connect Redis client and duplicates
+publisher.on("error", (err) => logger.error(`Redis publisher error: ${err.message}`));
+subscriber.on("error", (err) => logger.error(`Redis subscriber error: ${err.message}`));
+
+// Connect Redis client and pub/sub duplicates.
+// Returns true on success; returns false on failure so the caller can decide
+// whether to abort the server or run in degraded (no-cache/no-pubsub) mode.
 const connectRedis = async () => {
   try {
-    // Connect all clients and wait for them
     await redisClient.connect();
     await publisher.connect();
     await subscriber.connect();
-
-    console.log("🔄 All Redis connections are Ready");
+    logger.info("All Redis connections ready");
     return true;
   } catch (error) {
-    console.error("❌ Redis Connection Failed:", error.message);
-    throw error; // Throw instead of exiting to allow caller to handle
+    logger.error(`Redis connection failed: ${error.message}`);
+    return false;
   }
 };
 
@@ -281,6 +301,7 @@ const shutdown = () => {
 };
 
 module.exports = {
+  KEY_PREFIX,
   redisClient,
   connectRedis,
   cacheMiddleware,

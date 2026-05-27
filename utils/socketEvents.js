@@ -1,4 +1,5 @@
 const { publishEvent, KEY_PREFIX } = require("../config/redis");
+const logger = require("./logger");
 
 // Expense events
 const publishExpenseEvent = async (event, expense, groupId, affectedUsers) => {
@@ -12,7 +13,7 @@ const publishExpenseEvent = async (event, expense, groupId, affectedUsers) => {
 
     return true;
   } catch (error) {
-    console.error(`Error publishing expense event (${event}):`, error);
+    logger.error(`Error publishing expense event (${event}): ${error.message}`);
     return false;
   }
 };
@@ -34,7 +35,7 @@ const publishTransactionEvent = async (
 
     return true;
   } catch (error) {
-    console.error(`Error publishing transaction event (${event}):`, error);
+    logger.error(`Error publishing transaction event (${event}): ${error.message}`);
     return false;
   }
 };
@@ -50,7 +51,7 @@ const publishGroupEvent = async (event, group, affectedUsers) => {
 
     return true;
   } catch (error) {
-    console.error(`Error publishing group event (${event}):`, error);
+    logger.error(`Error publishing group event (${event}): ${error.message}`);
     return false;
   }
 };
@@ -65,7 +66,7 @@ const publishNotification = async (userId, notification) => {
 
     return true;
   } catch (error) {
-    console.error("Error publishing notification:", error);
+    logger.error(`Error publishing notification: ${error.message}`);
     return false;
   }
 };

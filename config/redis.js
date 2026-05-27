@@ -65,14 +65,13 @@ const keepAlive = async (interval = 7 * 24 * 60 * 60 * 1000) => {
       await redisClient.get(`${KEY_PREFIX}keepalive`);
       await redisClient.incr(`${KEY_PREFIX}ping_counter`);
 
-      console.log(`✅ Redis keep-alive ping sent at ${timestamp}`);
+      logger.info(`Redis keep-alive ping sent at ${timestamp}`);
     } catch (error) {
-      console.error("❌ Redis keep-alive error:", error);
-      // Try to reconnect if there's an error
+      logger.error(`Redis keep-alive error: ${error.message}`);
       try {
         await connectRedis();
       } catch (reconnectError) {
-        console.error("❌ Redis reconnection failed:", reconnectError);
+        logger.error(`Redis reconnection failed: ${reconnectError.message}`);
       }
     }
   };
@@ -106,7 +105,7 @@ const cacheMiddleware = (duration) => {
 
       if (cachedResponse) {
         // Return cached response
-        console.log(`🚀 Cache hit for ${key}`);
+        logger.info(`Cache hit: ${key}`);
         return res.json(JSON.parse(cachedResponse));
       }
 
@@ -121,7 +120,7 @@ const cacheMiddleware = (duration) => {
             .set(key, body, {
               EX: duration, // Set expiration in seconds
             })
-            .catch(console.error);
+            .catch((err) => logger.error(`Cache write error: ${err.message}`));
         }
 
         // Call the original send function
@@ -130,7 +129,7 @@ const cacheMiddleware = (duration) => {
 
       next();
     } catch (error) {
-      console.error(`❌ Cache Error: ${error.message}`);
+      logger.error(`Cache error: ${error.message}`);
       next();
     }
   };
@@ -168,7 +167,7 @@ const rateLimiter = (requests, per, errorMessage = "Too many requests") => {
       // Rate limit exceeded
       return res.status(429).json({ message: errorMessage });
     } catch (error) {
-      console.error(`❌ Rate Limit Error: ${error.message}`);
+      logger.error(`Rate limit error: ${error.message}`);
       next();
     }
   };
@@ -222,7 +221,7 @@ const clearCache = async (pattern) => {
 
   if (keys.length > 0) {
     await redisClient.del(keys);
-    console.log(`🧹 Cleared ${keys.length} cache entries matching ${pattern}`);
+    logger.info(`Cleared ${keys.length} cache entries matching ${pattern}`);
   }
 
   return true;
@@ -273,14 +272,14 @@ const subscribeToChannel = (channel, callback) => {
         const parsedMessage = JSON.parse(message);
         callback(parsedMessage);
       } catch (error) {
-        console.error(`❌ Error processing message from ${channel}:`, error);
+        logger.error(`Error processing message from ${channel}: ${error.message}`);
       }
     });
 
-    console.log(`🔔 Subscribed to channel: ${channel}`);
+    logger.info(`Subscribed to channel: ${channel}`);
     return true;
   } catch (error) {
-    console.error(`❌ Error subscribing to channel ${channel}:`, error);
+    logger.error(`Error subscribing to channel ${channel}: ${error.message}`);
     throw error;
   }
 };
@@ -289,14 +288,14 @@ const subscribeToChannel = (channel, callback) => {
 const shutdown = () => {
   if (keepAliveInterval) {
     clearInterval(keepAliveInterval);
-    console.log("🛑 Redis keep-alive interval cleared");
+    logger.info("Redis keep-alive interval cleared");
   }
 
   if (redisClient.isReady) {
     redisClient.quit();
     publisher.quit();
     subscriber.quit();
-    console.log("🛑 Redis connections closed");
+    logger.info("Redis connections closed");
   }
 };
 

@@ -1,6 +1,7 @@
 const { Server } = require("socket.io");
 const jwt = require("jsonwebtoken");
 const { subscribeToChannel, redisClient, KEY_PREFIX } = require("./redis");
+const logger = require("../utils/logger");
 require("dotenv").config();
 
 // Store active connections
@@ -25,12 +26,11 @@ const initSocketServer = (server) => {
     }
 
     try {
-      // Verify JWT token
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
       socket.userId = decoded.id;
       next();
     } catch (error) {
-      console.error("Socket authentication error:", error);
+      logger.warn(`Socket auth failed: ${error.message}`);
       next(new Error("Authentication error: Invalid token"));
     }
   });
@@ -38,7 +38,7 @@ const initSocketServer = (server) => {
   // Connection event
   io.on("connection", (socket) => {
     const userId = socket.userId;
-    console.log(`🔌 User connected: ${userId}`);
+    logger.info(`Socket connected: ${userId}`);
 
     // Store user's socket connection
     if (!activeConnections.has(userId)) {
@@ -57,20 +57,19 @@ const initSocketServer = (server) => {
     // Handle join group room events
     socket.on("join_group", (groupId) => {
       if (!groupId) return;
-      console.log(`User ${userId} joined group ${groupId}`);
+      logger.info(`Socket: user ${userId} joined group ${groupId}`);
       socket.join(`group:${groupId}`);
     });
 
-    // Handle leave group room events
     socket.on("leave_group", (groupId) => {
       if (!groupId) return;
-      console.log(`User ${userId} left group ${groupId}`);
+      logger.info(`Socket: user ${userId} left group ${groupId}`);
       socket.leave(`group:${groupId}`);
     });
 
     // Handle disconnection
     socket.on("disconnect", () => {
-      console.log(`🔌 User disconnected: ${userId}`);
+      logger.info(`Socket disconnected: ${userId}`);
       // Remove socket from user's connections
       if (activeConnections.has(userId)) {
         activeConnections.get(userId).delete(socket.id);
@@ -82,17 +81,14 @@ const initSocketServer = (server) => {
     });
   });
 
-  console.log("🔌 WebSocket server initialized");
+  logger.info("WebSocket server initialized");
 
-  // Connect Socket.io with Redis Pub/Sub for event broadcasting
   if (redisClient.isReady) {
     setupRedisSubscribers(io);
   } else {
-    console.warn(
-      "⚠️ Redis not ready, will set up subscribers when Redis connects"
-    );
+    logger.warn("Redis not ready — will set up pub/sub subscribers when Redis connects");
     redisClient.on("ready", () => {
-      console.log("🔄 Redis is now ready, setting up subscribers");
+      logger.info("Redis ready — setting up pub/sub subscribers");
       setupRedisSubscribers(io);
     });
   }
@@ -107,21 +103,14 @@ const setupRedisSubscribers = async (io) => {
     const setupChannel = async (channelName, handler, retries = 3) => {
       for (let attempt = 0; attempt < retries; attempt++) {
         try {
-          console.log(
-            `Attempting to subscribe to ${channelName} (attempt ${
-              attempt + 1
-            }/${retries})`
-          );
+          logger.info(`Subscribing to ${channelName} (attempt ${attempt + 1}/${retries})`);
           await subscribeToChannel(channelName, handler);
-          console.log(`Successfully subscribed to ${channelName}`);
+          logger.info(`Subscribed to ${channelName}`);
           return true;
         } catch (error) {
-          console.error(
-            `Error subscribing to ${channelName} (attempt ${attempt + 1}):`,
-            error
-          );
+          logger.error(`Failed to subscribe to ${channelName} (attempt ${attempt + 1}): ${error.message}`);
           if (attempt === retries - 1) throw error;
-          await new Promise((resolve) => setTimeout(resolve, 1000)); // Wait before retry
+          await new Promise((resolve) => setTimeout(resolve, 1000));
         }
       }
     };
@@ -140,7 +129,7 @@ const setupRedisSubscribers = async (io) => {
           });
         }
       } catch (err) {
-        console.error("Error handling expense_events message:", err);
+        logger.error(`Error handling expense_events message: ${err.message}`);
       }
     });
 
@@ -155,7 +144,7 @@ const setupRedisSubscribers = async (io) => {
           io.to(`user:${receiver}`).emit("transaction_update", { event, transaction });
         }
       } catch (err) {
-        console.error("Error handling transaction_events message:", err);
+        logger.error(`Error handling transaction_events message: ${err.message}`);
       }
     });
 
@@ -172,7 +161,7 @@ const setupRedisSubscribers = async (io) => {
           });
         }
       } catch (err) {
-        console.error("Error handling group_events message:", err);
+        logger.error(`Error handling group_events message: ${err.message}`);
       }
     });
 
@@ -184,17 +173,14 @@ const setupRedisSubscribers = async (io) => {
           io.to(`user:${userId}`).emit("notification", notification);
         }
       } catch (err) {
-        console.error("Error handling notification_events message:", err);
+        logger.error(`Error handling notification_events message: ${err.message}`);
       }
     });
 
-    console.log("✅ Redis subscribers configured for WebSocket events");
+    logger.info("Redis pub/sub subscribers ready");
   } catch (error) {
-    console.error("❌ Error in setupRedisSubscribers:", error.message);
-    setTimeout(() => {
-      console.log("🔄 Retrying Redis subscription setup in 5 seconds...");
-      setupRedisSubscribers(io);
-    }, 5000);
+    logger.error(`setupRedisSubscribers failed: ${error.message} — retrying in 5s`);
+    setTimeout(() => setupRedisSubscribers(io), 5000);
   }
 };
 

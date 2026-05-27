@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const { EXPENSE_TYPES, SPLIT_METHODS } = require("../utils/constants");
 
 const expenseSchema = new mongoose.Schema({
   groupId: {
@@ -26,14 +27,7 @@ const expenseSchema = new mongoose.Schema({
   },
   type: {
     type: String,
-    enum: [
-      "Food",
-      "Transportation",
-      "Accommodation",
-      "Utilities",
-      "Entertainment",
-      "Miscellaneous",
-    ],
+    enum: EXPENSE_TYPES,
     default: "Miscellaneous",
     required: true,
   },
@@ -50,7 +44,7 @@ const expenseSchema = new mongoose.Schema({
   ],
   splitMethod: {
     type: String,
-    enum: ["Equal", "Percentage", "Custom"],
+    enum: SPLIT_METHODS,
     default: "Equal",
   },
   splitValues: [
@@ -72,10 +66,10 @@ const expenseSchema = new mongoose.Schema({
       transactionStatus: { type: Boolean, default: false },
     },
   ],
-  createdAt: {
-    type: Date,
-    default: Date.now,
-  },
-});
+}, { timestamps: true });
+
+expenseSchema.index({ groupId: 1 });
+expenseSchema.index({ participants: 1 });
+expenseSchema.index({ payer: 1 });
 
 module.exports = mongoose.model("Expense", expenseSchema);

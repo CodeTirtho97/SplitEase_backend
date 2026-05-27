@@ -7,9 +7,13 @@ const {
   viewGroupDetails,
   getUserFriends,
   getGroupDebtSummary,
-} = require("../services/groupService");
+} = require("../controllers/groupController");
 
 const protect = require("../middleware/authMiddleware");
+const validateObjectId = require("../middleware/validateObjectId");
+const { rateLimiter } = require("../config/redis");
+
+const groupRateLimiter = rateLimiter(30, 60, "Too many group requests, please slow down");
 
 const router = express.Router();
 
@@ -74,7 +78,7 @@ const router = express.Router();
  *       401:
  *         description: Unauthorized
  */
-router.post("/create", protect, createGroup);
+router.post("/create", protect, groupRateLimiter, createGroup);
 
 /**
  * @swagger
@@ -205,7 +209,7 @@ router.get("/mygroups", protect, getUserGroups);
  *       401:
  *         description: Unauthorized
  */
-router.get("/:groupId/debt-summary", protect, getGroupDebtSummary);
+router.get("/:groupId/debt-summary", protect, validateObjectId, getGroupDebtSummary);
 
 /**
  * @swagger
@@ -255,7 +259,7 @@ router.get("/:groupId/debt-summary", protect, getGroupDebtSummary);
  *       401:
  *         description: Unauthorized
  */
-router.get("/:groupId", protect, viewGroupDetails);
+router.get("/:groupId", protect, validateObjectId, viewGroupDetails);
 
 /**
  * @swagger
@@ -315,7 +319,7 @@ router.get("/:groupId", protect, viewGroupDetails);
  *       404:
  *         description: Group not found
  */
-router.put("/edit/:groupId", protect, editGroup);
+router.put("/edit/:groupId", protect, validateObjectId, groupRateLimiter, editGroup);
 
 /**
  * @swagger
@@ -346,6 +350,6 @@ router.put("/edit/:groupId", protect, editGroup);
  *       401:
  *         description: Unauthorized
  */
-router.delete("/delete/:groupId", protect, deleteGroup);
+router.delete("/delete/:groupId", protect, validateObjectId, groupRateLimiter, deleteGroup);
 
 module.exports = router;

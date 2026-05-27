@@ -1,0 +1,78 @@
+name: CI — Lint + Test
+
+on:
+  push:
+    branches: ["master", "main"]
+  pull_request:
+    branches: ["master", "main"]
+
+jobs:
+  validate:
+    name: Lint & Test
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [20.x]
+
+    steps:
+      # ── Checkout & setup ────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      # ── Lint ─────────────────────────────────────────────────────────────────
+      - name: Lint (ESLint)
+        run: npm run lint
+        # Lint errors fail the build; warnings are reported but don't block.
+        # Adjust --max-warnings in package.json "lint" script to tighten/relax.
+
+      # ── Unit tests (no external services) ───────────────────────────────────
+      - name: Unit tests — splitCalculator & debtSimplifier
+        run: npm run test:unit
+        env:
+          NODE_ENV: test
+          JWT_SECRET: ci-jwt-secret-key-splitease-minimum-32-chars
+          REDIS_URL: rediss://mock-redis:6380
+
+      # ── Integration tests (in-memory MongoDB via mongodb-memory-server) ─────
+      - name: Integration tests — services & API routes
+        run: npm run test:integration
+        env:
+          NODE_ENV: test
+          JWT_SECRET: ci-jwt-secret-key-splitease-minimum-32-chars
+          REDIS_URL: rediss://mock-redis:6380
+          GOOGLE_CLIENT_ID: ci-google-client-id
+          GOOGLE_CLIENT_SECRET: ci-google-client-secret
+          BACKEND_GOOGLE_CALLBACK_URL: http://localhost:5000/api/auth/google/callback
+          # Exchange rate fetching is disabled when these are missing
+          EXCHANGE_RATE_URL: ""
+          EXCHANGERATES_API_KEY: ""
+
+      # ── Coverage report (optional, non-blocking) ─────────────────────────────
+      - name: Test coverage
+        run: npm run test:coverage -- --passWithNoTests
+        env:
+          NODE_ENV: test
+          JWT_SECRET: ci-jwt-secret-key-splitease-minimum-32-chars
+          REDIS_URL: rediss://mock-redis:6380
+          GOOGLE_CLIENT_ID: ci-google-client-id
+          GOOGLE_CLIENT_SECRET: ci-google-client-secret
+          BACKEND_GOOGLE_CALLBACK_URL: http://localhost:5000/api/auth/google/callback
+        continue-on-error: true
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+          retention-days: 7

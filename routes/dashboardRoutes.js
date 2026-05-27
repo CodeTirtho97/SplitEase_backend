@@ -1,11 +1,12 @@
 const express = require("express");
 const router = express.Router();
 const protect = require("../middleware/authMiddleware");
-const { cacheMiddleware, rateLimiter, clearCache } = require("../config/redis");
+const { cacheMiddleware } = require("../config/redis");
 const {
-  getDashboardStats,
-  getRecentTransactions,
-} = require("../services/dashboardService");
+  getStats,
+  getRecentTransactionsHandler,
+  clearCacheHandler,
+} = require("../controllers/dashboardController");
 
 /**
  * @swagger
@@ -33,15 +34,7 @@ const {
  *       500:
  *         description: Server error
  */
-router.get("/stats", protect, cacheMiddleware(300), async (req, res) => {
-  try {
-    const stats = await getDashboardStats(req.user._id);
-    res.status(200).json(stats);
-  } catch (error) {
-    console.error("Error in /stats route:", error);
-    res.status(500).json({ message: "Server error", error: error.message });
-  }
-});
+router.get("/stats", protect, cacheMiddleware(300), getStats);
 
 /**
  * @swagger
@@ -91,19 +84,7 @@ router.get("/stats", protect, cacheMiddleware(300), async (req, res) => {
  *       401:
  *         description: Unauthorized
  */
-router.get(
-  "/transactions/recent",
-  protect,
-  cacheMiddleware(120),
-  async (req, res) => {
-    try {
-      const transactions = await getRecentTransactions(req.user._id);
-      res.status(200).json({ transactions });
-    } catch (error) {
-      res.status(500).json({ message: "Server error", error: error.message });
-    }
-  }
-);
+router.get("/transactions/recent", protect, cacheMiddleware(120), getRecentTransactionsHandler);
 
 /**
  * @swagger
@@ -133,15 +114,6 @@ router.get(
  *       500:
  *         description: Error clearing cache
  */
-router.post("/clear-cache", protect, async (req, res) => {
-  try {
-    await clearCache(`*${req.user._id}*`);
-    res.status(200).json({ message: "Cache cleared successfully" });
-  } catch (error) {
-    res
-      .status(500)
-      .json({ message: "Error clearing cache", error: error.message });
-  }
-});
+router.post("/clear-cache", protect, clearCacheHandler);
 
 module.exports = router;

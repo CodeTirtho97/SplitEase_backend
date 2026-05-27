@@ -95,10 +95,10 @@ const calculateDebtReduction = (originalCount, optimizedCount) => {
  * @param {Object} nameMap  - { userId: fullName }
  * @returns {string[]}
  */
-const buildSettlementSummary = (optimized, nameMap = {}) =>
+const buildSettlementSummary = (optimized, nameMap = {}, currency = "") =>
   optimized.map(
     ({ from, to, amount }) =>
-      `${nameMap[from] || from} pays ${nameMap[to] || to} ₹${amount}`
+      `${nameMap[from] || from} pays ${nameMap[to] || to} ${currency ? currency + " " : ""}${amount}`
   );
 
 module.exports = { simplifyDebts, calculateDebtReduction, buildSettlementSummary };

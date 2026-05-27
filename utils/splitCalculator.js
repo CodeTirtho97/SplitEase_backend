@@ -33,8 +33,7 @@ const calculateSplitDetails = (
       0
     );
 
-    //console.log(totalPercentage);
-    if (totalPercentage !== 100) {
+    if (Math.abs(totalPercentage - 100) > 0.01) {
       throw new Error("Total percentage must be exactly 100%.");
     }
 
@@ -57,7 +56,7 @@ const calculateSplitDetails = (
       (sum, value) => sum + value.amount,
       0
     );
-    if (totalCustomAmount !== totalAmount) {
+    if (Math.abs(totalCustomAmount - totalAmount) > 0.01) {
       throw new Error("Total split amount must match total expense amount.");
     }
 

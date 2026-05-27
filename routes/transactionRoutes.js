@@ -3,7 +3,7 @@ const {
   getPendingTransactions,
   getTransactionHistory,
   settleTransaction,
-} = require("../services/transactionService");
+} = require("../controllers/transactionController");
 const protect = require("../middleware/authMiddleware");
 
 const validateTransactionId = (req, res, next) => {

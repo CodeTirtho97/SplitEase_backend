@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const { GROUP_TYPES } = require("../utils/constants");
 
 const groupSchema = new mongoose.Schema({
   name: {
@@ -13,7 +14,7 @@ const groupSchema = new mongoose.Schema({
   },
   type: {
     type: String,
-    enum: ["Travel", "Household", "Event", "Work", "Friends"],
+    enum: GROUP_TYPES,
     default: "Friends",
     required: true,
   },
@@ -33,10 +34,9 @@ const groupSchema = new mongoose.Schema({
       required: true,
     },
   ],
-  createdAt: {
-    type: Date,
-    default: Date.now,
-  },
-});
+}, { timestamps: true });
+
+groupSchema.index({ members: 1 });
+groupSchema.index({ createdBy: 1 });
 
 module.exports = mongoose.model("Group", groupSchema);

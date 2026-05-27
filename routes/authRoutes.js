@@ -3,13 +3,13 @@ const express = require("express");
 const passport = require("passport");
 const cors = require("cors");
 const {
-  signupUser,
-  loginUser,
-  logoutUser,
-  googleAuthCallback,
-  forgotPassword,
-  resetPassword,
-} = require("../services/authService");
+  signup: signupUser,
+  login: loginUser,
+  logout: logoutUser,
+  googleCallback: googleAuthCallback,
+  forgotPasswordHandler: forgotPassword,
+  resetPasswordHandler: resetPassword,
+} = require("../controllers/authController");
 const protect = require("../middleware/authMiddleware");
 const { rateLimiter } = require("../config/redis");
 
@@ -212,6 +212,7 @@ router.get(
   passport.authenticate("google", { session: false }),
   googleAuthCallback
 );
+
 
 /**
  * @swagger

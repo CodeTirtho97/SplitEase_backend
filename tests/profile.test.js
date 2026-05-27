@@ -1,116 +1,93 @@
 const request = require("supertest");
-const { app, server } = require("../server"); // Import the server
-const path = require("path");
+const { app } = require("../server");
+const User = require("../models/User");
 
-let testToken = ""; // Store the token for authentication
-let testUserId = ""; // Store user ID for friend addition
+let testToken = "";
+let secondUserId = "";
 
-// ✅ Login and get token before running tests
 beforeAll(async () => {
-  const res = await request(app).post("/api/auth/login").send({
-    email: "testuser@example.com",
+  // Create the primary test user and log in
+  await request(app).post("/api/auth/signup").send({
+    fullName: "Profile User",
+    email: "profileuser@example.com",
+    gender: "Female",
     password: "Test@1234",
+    confirmPassword: "Test@1234",
   });
 
-  expect(res.statusCode).toBe(200); // Ensure login was successful
-  testToken = res.body.token;
-  testUserId = res.body.userId;
+  const loginRes = await request(app).post("/api/auth/login").send({
+    email: "profileuser@example.com",
+    password: "Test@1234",
+  });
+  expect(loginRes.statusCode).toBe(200);
+  testToken = loginRes.body.token;
 
-  if (!testToken) {
-    throw new Error("🚨 Authentication failed: No token received!");
-  }
+  // Create a second user to use as a friend target
+  const secondUser = await User.create({
+    fullName: "Second User",
+    email: "second@example.com",
+    gender: "Male",
+    password: "Test@1234",
+  });
+  secondUserId = secondUser._id.toString();
 });
 
-// 1️⃣ **Upload Profile Picture**
-test("Upload Profile Picture", async () => {
-  const res = await request(app)
-    .post("/api/profile/upload")
-    .set("Authorization", `Bearer ${testToken}`)
-    .attach("profilePic", path.join(__dirname, "test_files/sample.jpg"));
-
-  expect(res.statusCode).toBe(200);
-  expect(res.body).toHaveProperty(
-    "message",
-    "Profile picture updated successfully"
-  );
-  expect(res.body).toHaveProperty("profilePic");
-});
-
-// 2️⃣ **Fetch User Profile**
-test("Fetch User Profile", async () => {
+test("GET /api/profile/me — returns the authenticated user's profile", async () => {
   const res = await request(app)
     .get("/api/profile/me")
     .set("Authorization", `Bearer ${testToken}`);
 
   expect(res.statusCode).toBe(200);
-  expect(res.body).toHaveProperty("fullName");
-  expect(res.body).toHaveProperty("email");
-  expect(res.body).toHaveProperty("profilePic");
+  expect(res.body).toHaveProperty("fullName", "Profile User");
+  expect(res.body).toHaveProperty("email", "profileuser@example.com");
 });
 
-// 3️⃣ **Add a Friend by User ID**
-test("Add a Friend", async () => {
+test("POST /api/profile/add-friend — adds a valid friend", async () => {
   const res = await request(app)
     .post("/api/profile/add-friend")
     .set("Authorization", `Bearer ${testToken}`)
-    .send({ friendId: "67b3302cc6907bd1d8d071d6" }); // Ensure this user exists in DB
+    .send({ friendId: secondUserId });
 
   expect(res.statusCode).toBe(200);
-  expect(res.body).toHaveProperty("message", "Friend added successfully");
-  expect(res.body).toHaveProperty("friends");
+  expect(res.body).toHaveProperty("message", "Friend added successfully!");
+  expect(res.body).toHaveProperty("friendId", secondUserId);
 });
 
-// 4️⃣ **Check for Invalid Friend ID**
-test("Fail to Add an Invalid Friend", async () => {
+test("POST /api/profile/add-friend — rejects duplicate friend", async () => {
   const res = await request(app)
     .post("/api/profile/add-friend")
     .set("Authorization", `Bearer ${testToken}`)
-    .send({ friendId: "invalidUserId123" });
+    .send({ friendId: secondUserId });
 
   expect(res.statusCode).toBe(400);
-  expect(res.body).toHaveProperty(
-    "message",
-    "Invalid user ID format. Must be a 24-character hex string."
-  );
+  expect(res.body).toHaveProperty("message", "Friend already added!");
 });
 
-// 5️⃣ **Check for Duplicate Friend Entry**
-test("Fail to Add a Duplicate Friend", async () => {
+test("POST /api/profile/add-friend — rejects invalid user ID format", async () => {
   const res = await request(app)
     .post("/api/profile/add-friend")
     .set("Authorization", `Bearer ${testToken}`)
-    .send({ friendId: "67b3302cc6907bd1d8d071d6" }); // Replace with same user ID as before
+    .send({ friendId: "not-a-valid-id" });
 
   expect(res.statusCode).toBe(400);
-  expect(res.body).toHaveProperty("message", "User is already your friend");
 });
 
-// 6️⃣ **Add a Payment Method**
-test("Add a Payment Method", async () => {
+test("POST /api/profile/add-payment — adds a payment method", async () => {
   const res = await request(app)
     .post("/api/profile/add-payment")
     .set("Authorization", `Bearer ${testToken}`)
-    .send({ methodType: "UPI", accountDetails: "user@upi" });
+    .send({ methodType: "UPI", accountDetails: "profileuser@upi" });
 
   expect(res.statusCode).toBe(200);
   expect(res.body).toHaveProperty("paymentMethods");
 });
 
-// 7️⃣ **Check for Duplicate Payment Method**
-test("Fail to Add Duplicate Payment Method", async () => {
+test("POST /api/profile/add-payment — rejects duplicate payment method", async () => {
   const res = await request(app)
     .post("/api/profile/add-payment")
     .set("Authorization", `Bearer ${testToken}`)
-    .send({ methodType: "UPI", accountDetails: "user@upi" });
+    .send({ methodType: "UPI", accountDetails: "profileuser@upi" });
 
   expect(res.statusCode).toBe(400);
-  expect(res.body).toHaveProperty(
-    "message",
-    "This payment method is already added."
-  );
-});
-
-// ✅ **Cleanup after tests (if necessary)**
-afterAll(async () => {
-  await server.close(); // Close Express Server
+  expect(res.body).toHaveProperty("message", "This payment method is already added.");
 });

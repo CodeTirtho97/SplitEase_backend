@@ -128,19 +128,64 @@ const setupRedisSubscribers = async (io) => {
 
     // Set up each channel with retry logic
     await setupChannel("expense_events", (message) => {
-      // Your existing handler code
+      try {
+        const data = JSON.parse(message);
+        const { event, expense, groupId, affectedUsers } = data;
+        if (groupId) {
+          io.to(`group:${groupId}`).emit("expense_update", { event, expense });
+        }
+        if (Array.isArray(affectedUsers)) {
+          affectedUsers.forEach((userId) => {
+            io.to(`user:${userId}`).emit("expense_update", { event, expense });
+          });
+        }
+      } catch (err) {
+        console.error("Error handling expense_events message:", err);
+      }
     });
 
     await setupChannel("transaction_events", (message) => {
-      // Your existing handler code
+      try {
+        const data = JSON.parse(message);
+        const { event, transaction, sender, receiver } = data;
+        if (sender) {
+          io.to(`user:${sender}`).emit("transaction_update", { event, transaction });
+        }
+        if (receiver) {
+          io.to(`user:${receiver}`).emit("transaction_update", { event, transaction });
+        }
+      } catch (err) {
+        console.error("Error handling transaction_events message:", err);
+      }
     });
 
     await setupChannel("group_events", (message) => {
-      // Your existing handler code
+      try {
+        const data = JSON.parse(message);
+        const { event, group, affectedUsers } = data;
+        if (group && group._id) {
+          io.to(`group:${group._id}`).emit("group_update", { event, group });
+        }
+        if (Array.isArray(affectedUsers)) {
+          affectedUsers.forEach((userId) => {
+            io.to(`user:${userId}`).emit("group_update", { event, group });
+          });
+        }
+      } catch (err) {
+        console.error("Error handling group_events message:", err);
+      }
     });
 
     await setupChannel("notification_events", (message) => {
-      // Your existing handler code
+      try {
+        const data = JSON.parse(message);
+        const { userId, notification } = data;
+        if (userId) {
+          io.to(`user:${userId}`).emit("notification", notification);
+        }
+      } catch (err) {
+        console.error("Error handling notification_events message:", err);
+      }
     });
 
     console.log("✅ Redis subscribers configured for WebSocket events");

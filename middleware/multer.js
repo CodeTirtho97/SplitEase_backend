@@ -15,11 +15,9 @@ const storage = new CloudinaryStorage({
 // Ensure only image files are uploaded
 const fileFilter = (req, file, cb) => {
   if (!file) {
-    //console.log("🚨 No file uploaded!");
     return cb(new Error("No file provided"), false);
   }
   if (!file.mimetype.startsWith("image/")) {
-    //console.log("🚨 Invalid file type:", file.mimetype);
     return cb(new Error("Only JPG, JPEG, PNG files are allowed"), false);
   }
   cb(null, true);

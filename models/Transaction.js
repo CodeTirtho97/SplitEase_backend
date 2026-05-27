@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
-const bcrypt = require("bcryptjs"); // Install with `npm install bcryptjs`
+const crypto = require("crypto");
+const { CURRENCIES, PAYMENT_MODES } = require("../utils/constants");
 
 const transactionSchema = new mongoose.Schema({
   expenseId: {
@@ -24,12 +25,12 @@ const transactionSchema = new mongoose.Schema({
   },
   currency: {
     type: String,
-    enum: ["INR", "USD", "EUR", "GBP", "JPY"],
+    enum: CURRENCIES,
     default: "INR",
   },
   mode: {
     type: String,
-    enum: ["UPI", "PayPal", "Stripe"],
+    enum: PAYMENT_MODES,
     required: false, // Optional until payment is settled
   },
   status: {
@@ -42,30 +43,19 @@ const transactionSchema = new mongoose.Schema({
     unique: true,
     index: true,
   }, // Hashed transaction ID
-  createdAt: {
-    type: Date,
-    default: Date.now,
-  },
-  updatedAt: {
-    type: Date,
-    default: Date.now,
-  },
-});
+}, { timestamps: true });
 
-// Pre-save hook to hash transactionId (generate a unique ID and hash it)
-transactionSchema.pre("save", async function (next) {
+// Pre-save hook to generate a URL-safe unique transactionId
+transactionSchema.pre("save", function (next) {
   if (this.isNew) {
-    // Generate a unique transaction ID (e.g., using timestamp + random string)
-    const uniqueId = `TXN_${Date.now()}_${Math.random()
-      .toString(36)
-      .substr(2, 9)}`;
-    // Hash the unique ID using bcrypt
-    const salt = await bcrypt.genSalt(10);
-    this.transactionId = await bcrypt.hash(uniqueId, salt);
+    this.transactionId = crypto.randomBytes(32).toString("hex");
   }
-  this.updatedAt = new Date();
   next();
 });
+
+transactionSchema.index({ sender: 1, status: 1 });
+transactionSchema.index({ receiver: 1, status: 1 });
+transactionSchema.index({ expenseId: 1 });
 
 const Transaction = mongoose.model("Transaction", transactionSchema);
 

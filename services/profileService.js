@@ -2,378 +2,255 @@ const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
 const User = require("../models/User");
 const cloudinary = require("../config/cloudinary");
+const { PAYMENT_MODES } = require("../utils/constants");
+const { ValidationError, NotFoundError } = require("../utils/AppError");
+const logger = require("../utils/logger");
 
-// Upload or Update Profile Picture
-const uploadProfilePicture = async (req, res) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({ message: "No file uploaded!" });
-    }
-
-    const allowedFormats = ["image/jpeg", "image/jpg", "image/png"];
-    const maxSize = 100 * 1024; // 100KB
-
-    // ✅ Validate File Format
-    if (!allowedFormats.includes(req.file.mimetype)) {
-      return res
-        .status(400)
-        .json({ message: "Invalid format! Use JPG, JPEG, PNG." });
-    }
-
-    // ✅ Validate File Size
-    if (req.file.size > maxSize) {
-      return res
-        .status(400)
-        .json({ message: "File too large! Max size: 100KB." });
-    }
-
-    const user = await User.findById(req.user.id);
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
-
-    // Delete old profile picture if exists
-    if (user.profilePic && user.profilePic.includes("cloudinary")) {
-      const publicId = user.profilePic.split("/").pop().split(".")[0]; // Extract public ID
-      await cloudinary.uploader.destroy(`profile_pics/${publicId}`);
-    }
-
-    // ✅ Save new profile pic
-    user.profilePic = req.file.path;
-    await user.save();
-
-    res.status(200).json({
-      message: "Profile picture updated successfully",
-      profilePic: user.profilePic,
-    });
-  } catch (error) {
-    res.status(500).json({ message: "Server Error", error: error.message });
+const uploadProfilePicture = async (userId, file) => {
+  if (!file) {
+    throw new ValidationError("No file uploaded!");
   }
+
+  const allowedFormats = ["image/jpeg", "image/jpg", "image/png"];
+  const maxSize = 100 * 1024;
+
+  if (!allowedFormats.includes(file.mimetype)) {
+    throw new ValidationError("Invalid format! Use JPG, JPEG, PNG.");
+  }
+  if (file.size > maxSize) {
+    throw new ValidationError("File too large! Max size: 100KB.");
+  }
+
+  const user = await User.findById(userId);
+  if (!user) {
+    throw new NotFoundError("User not found");
+  }
+
+  if (user.profilePic && user.profilePic.includes("cloudinary")) {
+    const publicId = user.profilePic.split("/").pop().split(".")[0];
+    await cloudinary.uploader.destroy(`profile_pics/${publicId}`);
+  }
+
+  user.profilePic = file.path;
+  await user.save();
+
+  return { profilePic: user.profilePic };
 };
 
-// ✅ Update Profile (Full Name & Gender)
-const updateProfile = async (req, res) => {
-  try {
-    const { fullName, gender } = req.body;
-
-    const user = await User.findById(req.user.id);
-    if (!user) return res.status(404).json({ message: "User not found" });
-
-    // ✅ Ensure only allowed fields are updated
-    if (req.body.fullName) user.fullName = req.body.fullName;
-    if (req.body.gender) user.gender = req.body.gender;
-    if (req.body.profilePic) user.profilePic = req.body.profilePic;
-
-    await user.save();
-    //console.log("Updated Profile Successfully:", user);
-
-    res.status(200).json({
-      message: "Profile updated successfully",
-      fullName: user.fullName,
-      gender: user.gender,
-    });
-  } catch (error) {
-    res.status(500).json({ message: "Server Error", error: error.message });
+const updateProfile = async (userId, { fullName, gender, profilePic } = {}) => {
+  const user = await User.findById(userId);
+  if (!user) {
+    throw new NotFoundError("User not found");
   }
+
+  if (fullName) user.fullName = fullName;
+  if (gender) user.gender = gender;
+  if (profilePic) user.profilePic = profilePic;
+
+  await user.save();
+
+  return { fullName: user.fullName, gender: user.gender };
 };
 
-// Fetch User Profile (Including Profile Pic)
-const getUserProfile = async (req, res) => {
-  try {
-    const user = await User.findById(req.user.id)
-      .select("-password")
-      .populate("friends", "fullName email profilePic"); // Make sure to include necessary fields
+const getUserProfile = async (userId) => {
+  const user = await User.findById(userId)
+    .select("-password")
+    .populate("friends", "fullName email profilePic");
 
-    if (!user) return res.status(404).json({ message: "User not found" });
-
-    // Log to verify population worked
-    console.log("Populated friends:", user.friends);
-
-    res.json({
-      fullName: user.fullName,
-      email: user.email,
-      gender: user.gender || "male",
-      profilePic: user.profilePic || "",
-      friends: user.friends,
-      paymentMethods: user.paymentMethods,
-      googleId: user.googleId || null, // Explicitly include googleId, default to null if not present
-    });
-  } catch (error) {
-    res.status(500).json({ error: "Server Error", details: error.message });
+  if (!user) {
+    throw new NotFoundError("User not found");
   }
+
+  return {
+    fullName: user.fullName,
+    email: user.email,
+    gender: user.gender || "male",
+    profilePic: user.profilePic || "",
+    friends: user.friends,
+    paymentMethods: user.paymentMethods,
+    googleId: user.googleId || null,
+  };
 };
 
-// ✅ Change Password Function
-const changePassword = async (req, res) => {
-  try {
-    //console.log("🔹 Received Change Password Request:", req.body);
-    const { oldPassword, newPassword, confirmNewPassword } = req.body;
-
-    if (!oldPassword || !newPassword || !confirmNewPassword) {
-      //console.log("❌ Missing Fields in Request");
-      return res.status(400).json({ message: "All fields are required" });
-    }
-    if (newPassword !== confirmNewPassword) {
-      //console.log("❌ New Passwords Do Not Match");
-      return res.status(400).json({ message: "New passwords do not match" });
-    }
-    if (newPassword.length < 8) {
-      //console.log("❌ Password Too Short");
-      return res
-        .status(400)
-        .json({ message: "Password must be at least 8 characters long" });
-    }
-
-    // Find user
-    const user = await User.findById(req.user.id);
-    if (!user) {
-      //console.log("❌ User Not Found");
-      return res.status(404).json({ message: "User not found" });
-    }
-
-    // Verify old password
-    const isMatch = await bcrypt.compare(oldPassword, user.password);
-    if (!isMatch) {
-      //console.log("❌ Incorrect Old Password");
-      return res.status(400).json({ message: "Incorrect old password" });
-    }
-
-    // Check if new password is same as old one
-    const isSamePassword = await bcrypt.compare(newPassword, user.password);
-    if (isSamePassword) {
-      //console.log("❌ Cannot Use Previous Password");
-      return res.status(400).json({
-        message: "Choose a different password than the previous one!",
-      });
-    }
-
-    // ✅ Hash new password properly
-    const salt = await bcrypt.genSalt(10);
-    user.password = await bcrypt.hash(newPassword, salt);
-
-    await user.save();
-    //console.log("✅ Password Updated Successfully!");
-    res.json({ message: "Password updated successfully" });
-  } catch (error) {
-    console.error("Change Password Error:", error);
-    res.status(500).json({ message: "Server Error", error: error.message });
+const changePassword = async (userId, { oldPassword, newPassword, confirmNewPassword }) => {
+  if (!oldPassword || !newPassword || !confirmNewPassword) {
+    throw new ValidationError("All fields are required");
   }
+  if (newPassword !== confirmNewPassword) {
+    throw new ValidationError("New passwords do not match");
+  }
+  if (newPassword.length < 8) {
+    throw new ValidationError("Password must be at least 8 characters long");
+  }
+
+  const user = await User.findById(userId);
+  if (!user) {
+    throw new NotFoundError("User not found");
+  }
+
+  const isMatch = await bcrypt.compare(oldPassword, user.password);
+  if (!isMatch) {
+    throw new ValidationError("Incorrect old password");
+  }
+
+  const isSamePassword = await bcrypt.compare(newPassword, user.password);
+  if (isSamePassword) {
+    throw new ValidationError("Choose a different password than the previous one!");
+  }
+
+  const salt = await bcrypt.genSalt(12);
+  user.password = await bcrypt.hash(newPassword, salt);
+  await user.save();
 };
 
-// ✅ Fix Friend Search API
-const searchFriends = async (req, res) => {
-  try {
-    const { friendName } = req.body;
-
-    // Input validation
-    if (!friendName || friendName.trim().length === 0) {
-      return res.status(400).json({ message: "Friend name is required" });
-    }
-
-    const user = await User.findById(req.user.id).select("friends");
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
-
-    // Improve search with more flexible regex
-    const friends = await User.find({
-      $or: [
-        { fullName: { $regex: new RegExp(friendName, "i") } }, // Case-insensitive name search
-        { email: { $regex: new RegExp(friendName, "i") } }, // Also search by email
-      ],
-      _id: { $ne: req.user.id }, // Exclude self
-    }).select("_id fullName email profilePic");
-
-    // Better logging to diagnose issues
-    console.log(
-      `Friend search for "${friendName}" found ${friends.length} results`
-    );
-
-    if (friends.length === 0) {
-      return res.status(404).json({ message: "No users found with this name" });
-    }
-
-    // Filter out already added friends
-    const userFriendIds = user.friends.map((id) => id.toString());
-    const availableFriends = friends.filter(
-      (friend) => !userFriendIds.includes(friend._id.toString())
-    );
-
-    console.log(
-      `After filtering existing friends, ${availableFriends.length} results remain`
-    );
-
-    if (availableFriends.length === 0) {
-      return res
-        .status(400)
-        .json({ message: "No new friends available to add" });
-    }
-
-    res
-      .status(200)
-      .json({ message: "Matching friends found", friends: availableFriends });
-  } catch (error) {
-    console.error("Friend Search Error:", error);
-    res.status(500).json({ message: "Server Error", error: error.message });
+const searchFriends = async (userId, friendName) => {
+  if (!friendName || friendName.trim().length === 0) {
+    throw new ValidationError("Friend name is required");
   }
+
+  const user = await User.findById(userId).select("friends");
+  if (!user) {
+    throw new NotFoundError("User not found");
+  }
+
+  const friends = await User.find({
+    $or: [
+      { fullName: { $regex: new RegExp(friendName, "i") } },
+      { email: { $regex: new RegExp(friendName, "i") } },
+    ],
+    _id: { $ne: userId },
+  }).select("_id fullName email profilePic");
+
+  logger.debug(`Friend search for "${friendName}" found ${friends.length} results`);
+
+  if (friends.length === 0) {
+    throw new NotFoundError("No users found with this name");
+  }
+
+  const userFriendIds = user.friends.map((id) => id.toString());
+  const availableFriends = friends.filter(
+    (friend) => !userFriendIds.includes(friend._id.toString())
+  );
+
+  logger.debug(`After filtering existing friends, ${availableFriends.length} results remain`);
+
+  if (availableFriends.length === 0) {
+    throw new ValidationError("No new friends available to add");
+  }
+
+  return { friends: availableFriends };
 };
 
-// ✅ Add a Friend (Only Valid Users)
-const addFriend = async (req, res) => {
-  try {
-    const { friendId } = req.body;
-
-    if (!friendId) {
-      return res.status(400).json({ message: "Friend ID is required" });
-    }
-
-    const user = await User.findById(req.user.id);
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
-
-    const friend = await User.findById(friendId);
-    if (!friend) {
-      return res.status(404).json({ message: "Friend not found" });
-    }
-
-    // ✅ Check if already added
-    if (user.friends.includes(friendId)) {
-      return res.status(400).json({ message: "Friend already added!" });
-    }
-
-    // ✅ Add Friend & Save
-    user.friends.push(friendId);
-    await user.save();
-
-    res.status(200).json({ message: "Friend added successfully!", friendId });
-  } catch (error) {
-    //console.error("Add Friend Error:", error);
-    res.status(500).json({ message: "Server Error", error: error.message });
+const addFriend = async (userId, friendId) => {
+  if (!friendId) {
+    throw new ValidationError("Friend ID is required");
   }
+  if (!mongoose.Types.ObjectId.isValid(friendId)) {
+    throw new ValidationError("Invalid user ID format. Must be a 24-character hex string.");
+  }
+
+  const user = await User.findById(userId);
+  if (!user) {
+    throw new NotFoundError("User not found");
+  }
+
+  const friend = await User.findById(friendId);
+  if (!friend) {
+    throw new NotFoundError("Friend not found");
+  }
+
+  if (user.friends.some((f) => f.toString() === friendId.toString())) {
+    throw new ValidationError("Friend already added!");
+  }
+
+  user.friends.push(friendId);
+  await user.save();
+
+  if (!friend.friends.map((id) => id.toString()).includes(userId.toString())) {
+    friend.friends.push(userId);
+    await friend.save();
+  }
+
+  return { friendId };
 };
 
-// ✅ Add Payment Method
-const addPaymentMethod = async (req, res) => {
-  try {
-    const { methodType, accountDetails } = req.body;
-
-    // Validate inputs
-    if (!methodType || !accountDetails) {
-      return res
-        .status(400)
-        .json({ message: "Payment method and account details are required" });
-    }
-
-    // Allowed payment methods
-    const allowedMethods = ["UPI", "PayPal", "Stripe"];
-    if (!allowedMethods.includes(methodType)) {
-      return res.status(400).json({ message: "Invalid payment method" });
-    }
-
-    const user = await User.findById(req.user.id);
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
-
-    // Check for duplicate payment method
-    const existingPayment = user.paymentMethods.find(
-      (payment) =>
-        payment.methodType === methodType &&
-        payment.accountDetails === accountDetails
-    );
-
-    if (existingPayment) {
-      return res.status(400).json({
-        message: "This payment method is already added.",
-      });
-    }
-
-    // Add new payment method
-    user.paymentMethods.push({ methodType, accountDetails });
-    await user.save();
-
-    // Return the complete user object to ensure the frontend has the latest data
-    // This helps prevent issues where the frontend loses user data after updates
-    const userResponse = {
-      _id: user._id,
-      fullName: user.fullName,
-      email: user.email,
-      gender: user.gender || "Other",
-      googleId: user.googleId,
-      profilePic: user.profilePic || "",
-      friends: user.friends,
-      paymentMethods: user.paymentMethods,
-    };
-
-    res.status(200).json(userResponse);
-  } catch (error) {
-    console.error("Add Payment Method Error:", error);
-    res.status(500).json({ message: "Server Error", error: error.message });
+const addPaymentMethod = async (userId, { methodType, accountDetails }) => {
+  if (!methodType || !accountDetails) {
+    throw new ValidationError("Payment method and account details are required");
   }
+
+  if (!PAYMENT_MODES.includes(methodType)) {
+    throw new ValidationError("Invalid payment method");
+  }
+
+  const user = await User.findById(userId);
+  if (!user) {
+    throw new NotFoundError("User not found");
+  }
+
+  const existingPayment = user.paymentMethods.find(
+    (payment) =>
+      payment.methodType === methodType && payment.accountDetails === accountDetails
+  );
+
+  if (existingPayment) {
+    throw new ValidationError("This payment method is already added.");
+  }
+
+  user.paymentMethods.push({ methodType, accountDetails });
+  await user.save();
+
+  return {
+    _id: user._id,
+    fullName: user.fullName,
+    email: user.email,
+    gender: user.gender || "Other",
+    googleId: user.googleId,
+    profilePic: user.profilePic || "",
+    friends: user.friends,
+    paymentMethods: user.paymentMethods,
+  };
 };
 
-const deleteFriend = async (req, res) => {
-  try {
-    const user = await User.findById(req.user.id);
-    if (!user) return res.status(404).json({ message: "User not found" });
-
-    // Remove friend ID from the array
-    user.friends = user.friends.filter(
-      (friend) => friend.toString() !== req.params.friendId
-    );
-    await user.save();
-
-    res.json({ message: "Friend removed successfully", friends: user.friends });
-  } catch (error) {
-    res.status(500).json({ message: "Server Error", error: error.message });
+const deleteFriend = async (userId, friendId) => {
+  const user = await User.findById(userId);
+  if (!user) {
+    throw new NotFoundError("User not found");
   }
+
+  user.friends = user.friends.filter((friend) => friend.toString() !== friendId);
+  await user.save();
+
+  return { friends: user.friends };
 };
 
-const deletePayment = async (req, res) => {
-  try {
-    const { paymentId } = req.params; // Get payment ID from URL params
-
-    // Input validation
-    if (!paymentId) {
-      return res.status(400).json({ message: "Payment ID is required" });
-    }
-
-    // Log for debugging
-    console.log(`Attempting to delete payment with ID: ${paymentId}`);
-
-    // Find the user
-    const user = await User.findById(req.user.id);
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
-
-    // Check if payment exists
-    const paymentExists = user.paymentMethods.some(
-      (payment) => payment._id.toString() === paymentId
-    );
-
-    if (!paymentExists) {
-      return res.status(404).json({ message: "Payment method not found" });
-    }
-
-    // Remove the payment using MongoDB's pull operator
-    user.paymentMethods = user.paymentMethods.filter(
-      (payment) => payment._id.toString() !== paymentId
-    );
-
-    await user.save();
-
-    console.log(`Successfully removed payment method ${paymentId}`);
-
-    res.status(200).json({
-      message: "Payment method removed successfully",
-      paymentMethods: user.paymentMethods,
-    });
-  } catch (error) {
-    console.error("Delete Payment Error:", error);
-    res.status(500).json({ message: "Server Error", error: error.message });
+const deletePayment = async (userId, paymentId) => {
+  if (!paymentId) {
+    throw new ValidationError("Payment ID is required");
   }
+
+  logger.debug(`Attempting to delete payment ${paymentId}`);
+
+  const user = await User.findById(userId);
+  if (!user) {
+    throw new NotFoundError("User not found");
+  }
+
+  const paymentExists = user.paymentMethods.some(
+    (payment) => payment._id.toString() === paymentId
+  );
+  if (!paymentExists) {
+    throw new NotFoundError("Payment method not found");
+  }
+
+  user.paymentMethods = user.paymentMethods.filter(
+    (payment) => payment._id.toString() !== paymentId
+  );
+  await user.save();
+
+  logger.debug(`Removed payment method ${paymentId}`);
+
+  return { paymentMethods: user.paymentMethods };
 };
 
 module.exports = {

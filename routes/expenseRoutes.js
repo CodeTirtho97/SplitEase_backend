@@ -5,12 +5,18 @@ const {
   getUserExpenses,
   getExpenseById,
   deleteExpense,
+} = require("../controllers/expenseController");
+const {
   getExpenseSummary,
-  updateExchangeRates,
   getRecentExpenses,
   getExpenseBreakdown,
-} = require("../services/expenseService");
+} = require("../controllers/analyticsController");
+const { updateExchangeRates } = require("../controllers/exchangeRateController");
 const protect = require("../middleware/authMiddleware");
+const validateObjectId = require("../middleware/validateObjectId");
+const { cacheMiddleware, rateLimiter } = require("../config/redis");
+
+const expenseRateLimiter = rateLimiter(30, 60, "Too many expense requests, please slow down");
 
 const router = express.Router();
 
@@ -121,7 +127,7 @@ const router = express.Router();
  *       401:
  *         description: Unauthorized
  */
-router.post("/create", protect, createExpense);
+router.post("/create", protect, expenseRateLimiter, createExpense);
 
 /**
  * @swagger
@@ -162,7 +168,7 @@ router.post("/create", protect, createExpense);
  *       401:
  *         description: Unauthorized
  */
-router.get("/summary", protect, getExpenseSummary);
+router.get("/summary", protect, cacheMiddleware(300), getExpenseSummary);
 
 /**
  * @swagger
@@ -195,7 +201,7 @@ router.get("/summary", protect, getExpenseSummary);
  *       401:
  *         description: Unauthorized
  */
-router.get("/recent", protect, getRecentExpenses);
+router.get("/recent", protect, cacheMiddleware(120), getRecentExpenses);
 
 /**
  * @swagger
@@ -254,7 +260,7 @@ router.get("/recent", protect, getRecentExpenses);
  *       401:
  *         description: Unauthorized
  */
-router.get("/breakdown/:currency", protect, getExpenseBreakdown);
+router.get("/breakdown/:currency", protect, cacheMiddleware(300), getExpenseBreakdown);
 
 /**
  * @swagger
@@ -324,7 +330,7 @@ router.get("/my-expenses", protect, getUserExpenses);
  *       401:
  *         description: Unauthorized
  */
-router.get("/group/:groupId", protect, getGroupExpenses);
+router.get("/group/:groupId", protect, validateObjectId, getGroupExpenses);
 
 /**
  * @swagger
@@ -359,7 +365,7 @@ router.get("/group/:groupId", protect, getGroupExpenses);
  *       401:
  *         description: Unauthorized
  */
-router.get("/expense/:expenseId", protect, getExpenseById);
+router.get("/expense/:expenseId", protect, validateObjectId, getExpenseById);
 
 /**
  * @swagger
@@ -390,7 +396,7 @@ router.get("/expense/:expenseId", protect, getExpenseById);
  *       401:
  *         description: Unauthorized
  */
-router.delete("/delete/:expenseId", protect, deleteExpense);
+router.delete("/delete/:expenseId", protect, validateObjectId, expenseRateLimiter, deleteExpense);
 
 /**
  * @swagger

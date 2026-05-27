@@ -1,17 +1,21 @@
 const express = require("express");
 const {
-  uploadProfilePicture,
-  getUserProfile,
-  addFriend,
-  addPaymentMethod,
-  updateProfile,
-  changePassword,
-  searchFriends,
-  deleteFriend,
-  deletePayment,
-} = require("../services/profileService");
+  uploadPic: uploadProfilePicture,
+  getProfile: getUserProfile,
+  addFriendHandler: addFriend,
+  addPaymentHandler: addPaymentMethod,
+  updateProfileHandler: updateProfile,
+  changePasswordHandler: changePassword,
+  searchFriendsHandler: searchFriends,
+  deleteFriendHandler: deleteFriend,
+  deletePaymentHandler: deletePayment,
+} = require("../controllers/profileController");
 const protect = require("../middleware/authMiddleware");
 const upload = require("../middleware/multer");
+const validateObjectId = require("../middleware/validateObjectId");
+const { rateLimiter } = require("../config/redis");
+
+const profileRateLimiter = rateLimiter(30, 60, "Too many profile requests, please slow down");
 
 const router = express.Router();
 
@@ -89,7 +93,7 @@ router.get("/me", protect, getUserProfile);
  *       401:
  *         description: Unauthorized
  */
-router.put("/update", protect, updateProfile);
+router.put("/update", protect, profileRateLimiter, updateProfile);
 
 /**
  * @swagger
@@ -173,7 +177,7 @@ router.post("/upload", protect, upload.single("profilePic"), uploadProfilePictur
  *       401:
  *         description: Unauthorized
  */
-router.put("/change-password", protect, changePassword);
+router.put("/change-password", protect, profileRateLimiter, changePassword);
 
 /**
  * @swagger
@@ -209,7 +213,7 @@ router.put("/change-password", protect, changePassword);
  *       401:
  *         description: Unauthorized
  */
-router.post("/add-friend", protect, addFriend);
+router.post("/add-friend", protect, profileRateLimiter, addFriend);
 
 /**
  * @swagger
@@ -288,7 +292,7 @@ router.post("/search-friends", protect, searchFriends);
  *       401:
  *         description: Unauthorized
  */
-router.post("/add-payment", protect, addPaymentMethod);
+router.post("/add-payment", protect, profileRateLimiter, addPaymentMethod);
 
 /**
  * @swagger
@@ -316,7 +320,7 @@ router.post("/add-payment", protect, addPaymentMethod);
  *       401:
  *         description: Unauthorized
  */
-router.delete("/delete-friend/:friendId", protect, deleteFriend);
+router.delete("/delete-friend/:friendId", protect, validateObjectId, profileRateLimiter, deleteFriend);
 
 /**
  * @swagger
@@ -343,6 +347,6 @@ router.delete("/delete-friend/:friendId", protect, deleteFriend);
  *       401:
  *         description: Unauthorized
  */
-router.delete("/delete-payment/:paymentId", protect, deletePayment);
+router.delete("/delete-payment/:paymentId", protect, validateObjectId, profileRateLimiter, deletePayment);
 
 module.exports = router;

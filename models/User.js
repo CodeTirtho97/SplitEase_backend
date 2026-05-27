@@ -27,7 +27,6 @@ const UserSchema = new mongoose.Schema(
         accountDetails: { type: String, required: true },
       },
     ],
-    //groups: [{ type: mongoose.Schema.Types.ObjectId, ref: "Group" }],
   },
   { timestamps: true }
 );
@@ -51,6 +50,8 @@ UserSchema.pre("save", async function (next) {
 UserSchema.methods.matchPassword = async function (enteredPassword) {
   return await bcrypt.compare(enteredPassword, this.password);
 };
+
+// Note: email index is created implicitly by unique:true above
 
 const User = mongoose.model("User", UserSchema);
 module.exports = User;

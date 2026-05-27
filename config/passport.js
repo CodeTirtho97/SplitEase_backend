@@ -2,7 +2,6 @@ const passport = require("passport");
 const GoogleStrategy = require("passport-google-oauth20").Strategy;
 const User = require("../models/User");
 const jwt = require("jsonwebtoken");
-const crypto = require("crypto");
 require("dotenv").config();
 
 // ✅ Google OAuth Strategy Configuration
@@ -27,7 +26,6 @@ passport.use(
             googleId: profile.id,
             profilePic: profile.photos?.[0]?.value || "",
             authProvider: "google",
-            password: crypto.randomBytes(16).toString("hex"), // Not used for Google login
           });
         } else if (!user.googleId) {
           // Link Google ID if user already exists

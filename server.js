@@ -1,20 +1,22 @@
 require("dotenv").config();
 const express = require("express");
-const http = require("http"); // Add HTTP module for Socket.IO
+const logger = require("./utils/logger");
+const http = require("http");
+const helmet = require("helmet");
 const swaggerUi = require("swagger-ui-express");
 const swaggerSpec = require("./config/swagger");
 const connectDB = require("./config/db");
-const { connectRedis, keepAlive } = require("./config/redis"); // Import keepAlive
-const { initSocketServer } = require("./config/socket"); // Import WebSocket setup
+const { connectRedis, keepAlive } = require("./config/redis");
+const { initSocketServer } = require("./config/socket");
 const cors = require("cors");
-const cronJobs = require("./utils/cronJobs");
+require("./utils/cronJobs"); // side-effect: registers cron jobs
 const healthRoutes = require("./routes/healthRoutes");
 
 const profileRoutes = require("./routes/profileRoutes");
 const authRoutes = require("./routes/authRoutes");
 
 const passport = require("passport");
-require("./config/passport"); // Import Passport Config
+require("./config/passport");
 
 const expenseRoutes = require("./routes/expenseRoutes");
 const transactionRoutes = require("./routes/transactionRoutes");
@@ -22,6 +24,15 @@ const groupRoutes = require("./routes/groupRoutes");
 const dashboardRoutes = require("./routes/dashboardRoutes");
 
 const app = express();
+
+// Security headers — must come before routes
+app.use(helmet());
+app.use((req, res, next) => {
+  res.setHeader("Cross-Origin-Opener-Policy", "same-origin-allow-popups");
+  res.setHeader("Cross-Origin-Embedder-Policy", "unsafe-none");
+  next();
+});
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -36,18 +47,21 @@ app.use(
         callback(new Error("Not allowed by CORS"));
       }
     },
-    credentials: true, // Allow cookies and authentication
-    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"], // Allow all HTTP methods
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allowedHeaders: [
       "Origin",
       "X-Requested-With",
       "Content-Type",
       "Accept",
       "Authorization",
-    ], // Allow common headers
-    optionsSuccessStatus: 200, // Some browsers (e.g., IE) require this
+    ],
+    optionsSuccessStatus: 200,
   })
 );
+
+// Passport must be initialized before any route that uses it
+app.use(passport.initialize());
 
 // Create HTTP server from Express app (needed for Socket.IO)
 const server = http.createServer(app);
@@ -57,16 +71,12 @@ const server = http.createServer(app);
   try {
     await connectDB();
     await connectRedis();
-
-    // Set up Redis keep-alive to prevent deletion due to inactivity
-    // Ping every week (adjust as needed based on Upstash's policy)
     await keepAlive(1 * 24 * 60 * 60 * 1000);
-
-    console.log("✅ Database & Redis connected successfully!");
-    console.log("🔄 Redis keep-alive mechanism activated");
+    logger.info("Database & Redis connected successfully");
+    logger.info("Redis keep-alive mechanism activated");
   } catch (error) {
-    console.error("❌ Error connecting to MongoDB/Redis:", error.message);
-    process.exit(1); // Exit process if DB connection fails
+    logger.error(`Error connecting to MongoDB/Redis: ${error.message}`);
+    process.exit(1);
   }
 })();
 
@@ -83,7 +93,6 @@ app.use(
     swaggerOptions: { persistAuthorization: true },
   })
 );
-// Raw OpenAPI JSON (useful for Postman/Insomnia import)
 app.get("/api/docs.json", (req, res) => {
   res.setHeader("Content-Type", "application/json");
   res.send(swaggerSpec);
@@ -93,29 +102,7 @@ app.get("/api/docs.json", (req, res) => {
 app.use("/api", dashboardRoutes);
 app.use("/api/health", healthRoutes);
 app.use("/api/profile", profileRoutes);
-app.use(passport.initialize());
-// Apply CORS specifically to /api/auth routes
-app.use(
-  "/api/auth",
-  cors({
-    origin: (origin, callback) => {
-      // Allow requests with no origin (like mobile apps)
-      if (!origin) return callback(null, true);
-      if (allowedOrigins.indexOf(origin) === -1) {
-        return callback(
-          new Error(
-            "The CORS policy for this site does not allow access from the specified Origin."
-          ),
-          false
-        );
-      }
-      return callback(null, true);
-    },
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  }),
-  authRoutes
-);
+app.use("/api/auth", authRoutes);
 app.use("/api/expenses", expenseRoutes);
 app.use("/api/transactions", transactionRoutes);
 app.use("/api/groups", groupRoutes);
@@ -139,33 +126,31 @@ app.options(
 );
 
 // Global Error Handling Middleware
-app.use((err, req, res, next) => {
-  console.error("Server Error:", err.message);
-  res.status(500).json({ error: "Server Error", details: err.message });
-});
-
-app.use((req, res, next) => {
-  res.setHeader("Cross-Origin-Opener-Policy", "same-origin-allow-popups");
-  res.setHeader("Cross-Origin-Embedder-Policy", "unsafe-none");
-  next();
+app.use((err, req, res, _next) => {
+  if (err.isOperational) {
+    return res.status(err.statusCode).json({ message: err.message });
+  }
+  logger.error(`Unexpected server error: ${err.stack || err.message}`);
+  res.status(500).json({ message: "Server Error" });
 });
 
 // Setup graceful shutdown
 process.on("SIGINT", async () => {
   const { shutdown } = require("./config/redis");
-  console.log("🛑 Gracefully shutting down server...");
-  shutdown();
-  process.exit(0);
+  logger.info("Gracefully shutting down server...");
+  server.close(() => {
+    shutdown();
+    process.exit(0);
+  });
 });
 
-// 🚀 **Only start the server when NOT running Jest tests**
 const PORT = process.env.PORT || 5000;
 
-// Use 'server' instead of 'app' to start the HTTP server with Socket.IO
-server.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`🔌 WebSocket server is active`);
-});
+if (require.main === module) {
+  server.listen(PORT, () => {
+    logger.info(`Server running on port ${PORT}`);
+    logger.info("WebSocket server is active");
+  });
+}
 
-// ✅ Export app for testing (Do NOT start server in Jest)
 module.exports = { app, server, io };
